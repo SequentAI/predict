@@ -7,7 +7,8 @@
 
 class Predictor {
   public:
-    Predictor(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num);
+    Predictor(const LVecVec& deps, const LVecVec& syms,
+      const LVecVec& sym_ths, long sym_num);
     virtual ~Predictor() {}
 
     virtual void learn(long from, long to) = 0;  // learn [from, ..., to)
@@ -39,7 +40,8 @@ class Predictor {
     void print_answer(long no_adv);
 };
 
-Predictor::Predictor(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num)
+Predictor::Predictor(const LVecVec& deps, const LVecVec& syms,
+  const LVecVec& sym_ths, long sym_num)
   : deps(deps), syms(syms), sym_ths(sym_ths) {}
 
 void Predictor::learn_all() {

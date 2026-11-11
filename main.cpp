@@ -2,13 +2,14 @@
 #include <iomanip>
 #include <memory>
 
+#include "cosine.cpp"
 #include "knn.cpp"
 #include "mepo.cpp"
 #include "nbayes.cpp"
 #include "rforest.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.1.0";
+const string version_str = "0.2.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -19,7 +20,7 @@ const string usage_str =
   "  <seq>  is a file containing the order of theorems\n"
   "\n"
   "General options:\n"
-  "  -p <method>  method is either knn, mepo, nbayes, or rforest\n"
+  "  -p <method>  method is either knn, mepo, nbayes, cosine, or rforest\n"
   "  -n <i>       i is the number of predictions to output\n"
   "  -e <eval>    eval is an optional file, containing theorems for which we want predictions\n"
   "  -S           print each prediction's score after it, in parentheses\n"
@@ -27,11 +28,17 @@ const string usage_str =
   "  -y <path>    Ymport learned predictor data from path\n"
   "\n"
   "Predictor-specific options:\n"
+  " Naive Bayes:\n"
+  "  -d <n>       learn a theorem's features for only its first n dependencies\n"
+  "               (default 20; 0 for all)\n"
   " Random Forest:\n"
   "  -t <n>       number of trees to build\n"
   "  -s <n>       number of samples to consider per tree\n"
   "  -f <n>       number of features to consider per tree\n"
   "  -w <n>       dependency weight\n"
+  "\n"
+  "Methods nbayes-dense and cosine-dense compute the rankings of nbayes and\n"
+  "cosine by scanning every theorem; they are slow references for the tests.\n"
   "\n"
   "predict --version prints the version.\n";
 
@@ -133,16 +140,29 @@ int main(int argc, char* argv[]) {
   long n_features = 128;
   double depweight = 1.7;
 
+  // Naive Bayes specific options
+  long max_deps = 20;
+
   // print scores
   bool scores = false;
 
   int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "he:n:p:k:St:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "hd:e:n:p:k:St:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
         return EXIT_SUCCESS;
+      case 'd': {
+        char *rest;
+        errno = 0;
+        max_deps = strtol(optarg, &rest, 10);
+        if (*optarg == '\0' || *rest != '\0' || errno != 0 || max_deps < 0) {
+          cerr << "Error: You have to specify a valid number of dependencies!\n";
+          return EXIT_FAILURE;
+        }
+        break;
+      }
       case 'e':
         evalf = optarg;
         break;
@@ -206,8 +226,12 @@ int main(int argc, char* argv[]) {
     predictor.reset(new kNN(deps, syms, sym_ths, sym_num));
   else if (method == "mepo")
     predictor.reset(new MePo(deps, syms, sym_ths, sym_num));
-  else if (method == "nbayes")
-    predictor.reset(new NaiveBayes(deps, syms, sym_ths, sym_num));
+  else if (method == "nbayes" || method == "nbayes-dense")
+    predictor.reset(new NaiveBayes(deps, syms, sym_ths, sym_num, max_deps,
+      method == "nbayes-dense"));
+  else if (method == "cosine" || method == "cosine-dense")
+    predictor.reset(new Cosine(deps, syms, sym_ths, sym_num,
+      method == "cosine-dense"));
   else if (method == "rforest")
     predictor.reset(new RandomForest(deps, syms, sym_ths, sym_num,
       n_trees, n_samples, n_features, depweight));

@@ -21,12 +21,12 @@ number=0
 ok() { echo "ok $number - $1"; }
 fail() { echo "FAIL $number - $1: $2"; failures=$((failures + 1)); }
 
-# run <name> <syms> <deps> <seq> <options...> < query: runs predict on a corpus
-# written in $WORK/<name>.{syms,deps,seq}, with a 5 s limit
+# run <name> <options...> < query: runs predict on a corpus written in
+# $WORK/<name>.{syms,deps,seq}, with a limit of $LIMIT seconds (default 5)
 run() {
   local name=$1
   shift
-  timeout 5 "$PREDICT" "$WORK/$name.syms" "$WORK/$name.deps" "$WORK/$name.seq" \
+  timeout "${LIMIT:-5}" "$PREDICT" "$WORK/$name.syms" "$WORK/$name.deps" "$WORK/$name.seq" \
     "$@" 2>"$WORK/stderr"
 }
 
@@ -247,10 +247,87 @@ if [ -z "$msg" ]; then
 fi
 if [ -n "$msg" ]; then fail "query weights" "$msg"; else ok "query weights"; fi
 
-# golden rankings of knn, nbayes and mepo on the test corpus
+# 8. the number of dependencies naive Bayes learns
 number=8
+# t depends on d1 ... d30, which are in <seq> in reverse; naive Bayes ranks
+# t first for t's feature, then the dependencies that learned it, then the
+# others, equal scores in <seq> order
+seq= syms= deps=t:
+for i in $(seq 30 -1 1); do seq+="d$i"$'\n'; syms+="d$i:\"y$i\""$'\n'; done
+for i in $(seq 1 30); do deps+=" d$i"; done
+corpus many "${seq}t"$'\n' "${syms}t:\"x\""$'\n' "$deps"$'\n'
+first20="t $(seq -f 'd%g' -s ' ' 20 -1 1) $(seq -f 'd%g' -s ' ' 30 -1 21) "
+all30="t $(seq -f 'd%g' -s ' ' 30 -1 1) "
 msg=
-for m in knn nbayes mepo; do
+for m in nbayes nbayes-dense; do
+  for opt in "" "-d 20" "-d 0" "-d 30" "-d 31"; do
+    case $opt in "" | "-d 20") want=$first20 ;; *) want=$all30 ;; esac
+    out=$(run many -p $m -n 31 $opt <<<'"x"')
+    if [ "$out" != "$want" ]; then
+      msg="$m ${opt:-without -d} gave '$out', not '$want'"
+      break 2
+    fi
+  done
+done
+if [ -n "$msg" ]; then fail "naive Bayes dependency limit" "$msg"; else ok "naive Bayes dependency limit"; fi
+
+# same <name> <method> <reference> <n> <query file> [options...]: succeeds if
+# both methods give the same ranking of the n best theorems for every query
+same() {
+  local name=$1 m=$2 ref=$3 n=$4 queries=$5
+  shift 5
+  local a b
+  a=$(run $name -p $m -n $n "$@" < "$queries") || return 1
+  b=$(run $name -p $ref -n $n "$@" < "$queries") || return 1
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
+# weight <query file>: the queries with some features weighted
+weight() {
+  sed -e 's/"\(c:[a-z]*\)"/"\1"@0.5/' -e 's/"\(t:[a-z]*\)"/"\1"@2.5/' \
+      -e 's/"p:eq"/"p:eq"@0/' "$1"
+}
+
+# 9 and 10. sparse naive Bayes and cosine against the methods scanning every
+# theorem, on the test corpus and on a synthetic corpus of 5000 theorems, on
+# whole rankings
+LIMIT=600
+weight "$DATA/lists.queries" > "$WORK/lists.wqueries"
+python3 "$TESTS/gen.py" "$WORK/synth" 5000 20 2000 1
+for i in $(seq 0 50 4999); do echo "t$i"; done > "$WORK/synth.eval"
+cat "$WORK/synth.queries" "$WORK/synth.wqueries" > "$WORK/synth.all"
+number=9
+for m in nbayes cosine; do
+  msg=
+  for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do
+    same lists $m $m-dense 16 "$q" || msg="$msg $(basename "$q")"
+  done
+  same synth $m $m-dense 5000 "$WORK/synth.all" || msg="$msg synth.queries+wqueries"
+  same synth $m $m-dense 5000 /dev/null -e "$WORK/synth.eval" || msg="$msg synth.eval"
+  # the scores agree up to rounding
+  for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do
+    run lists -p $m -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/sparse"
+    run lists -p $m-dense -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/dense"
+    paste "$WORK/sparse" "$WORK/dense" | awk -F'\t' '
+      $1 ~ /^\(/ { a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
+                   if (d < 0) d = -d; m = b < 0 ? -b : b
+                   if (d > 1e-9 * (m + 1)) bad = 1; next }
+      $1 != $2 { bad = 1 }
+      END { exit bad || NR < 16 }' || msg="$msg scores($(basename "$q"))"
+  done
+  if [ -n "$msg" ]; then
+    fail "$m equals $m-dense" "rankings differ on$msg"
+  else
+    ok "$m equals $m-dense"
+  fi
+  number=$((number + 1))
+done
+LIMIT=5
+
+# golden rankings on the test corpus
+number=11
+msg=
+for m in knn nbayes mepo cosine; do
   out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
   if [ "$UPDATE" = --update-golden ]; then
     printf '%s\n' "$out" > "$GOLDEN/$m.out"
