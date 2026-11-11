@@ -88,7 +88,8 @@ largest weight, and an empty line is a query with no features.
 - Featureless theorems and empty queries are accepted, and give finite
   scores in `knn`, `nbayes` and `mepo`; `rforest` accepts them too.
 - Features may contain `"`, `\` and newlines, and ids may contain `:`, as
-  escaped above.
+  escaped above; `rforest`'s exported trees (`-x`, read back with `-y`) escape
+  feature and theorem names the same way inside their quoted labels.
 - Dependencies later in `<seq>` than their dependent are kept.
 - Repeated features count once in `<syms>` and in queries.
 - Query features may carry weights.

@@ -69,9 +69,11 @@ RandomForest::~RandomForest() {
 }
 
 void RandomForest::import_data(string dirname) {
-  for (unsigned i = 0; i < forest.size(); i++)
+  for (unsigned i = 0; i < forest.size(); i++) {
+    delete forest[i];
     forest[i] = new DecisionTree(dirname + "/tree" + to_string(i) + ".dot",
       th_no, sym_no);
+  }
   prelearned = true;
 }
 

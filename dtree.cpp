@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <regex>
+#include "format.cpp"
 
 typedef unordered_map<long, unsigned> LUMap;
 
@@ -82,10 +83,9 @@ DecisionTree::DecisionTree(string filename,
     string line;
 
     while (getline(f, line)) {
-      if (line.find("->") != string::npos ||
-          line == "digraph tree {" ||
-          line == "  node [shape=box]" ||
-          line == "}")
+      // only node lines carry a label; edges and the header are skipped
+      const auto label = line.find(" [label = \"");
+      if (label == string::npos)
         continue;
       else {
         DecisionTree *pos = this;
@@ -122,14 +122,10 @@ DecisionTree::DecisionTree(string filename,
         if (*p != ' ')
           exit_error("Content expected after tree position.");
 
-        auto opening_quote = find(p + 1, line.end(), '"');
-        if (opening_quote == line.end())
-          exit_error("Opening quote not found.");
-        auto closing_quote = find(opening_quote + 1, line.end(), '"');
-        if (closing_quote == line.end())
-          exit_error("Closing quote not found.");
-
-        string name_str(opening_quote + 1, closing_quote);
+        if (p != line.begin() + label)
+          exit_error("Label expected after tree position.");
+        auto name_begin = line.begin() + label + string(" [label = \"").size();
+        const string name_str = read_quoted(name_begin, line.end());
 
         if (is_feature) {
           auto sym = sym_no.find(name_str);
@@ -178,12 +174,12 @@ string DecisionTree::dot(string pos,
     for (unsigned i = 0; i < labels.size(); i++) {
       string new_pos = pos + to_string(i);
       s += "  " + pos + " -> " + new_pos + "\n";
-      s += "  " + new_pos + " [label = \"" + no_th[labels[i]]
+      s += "  " + new_pos + " [label = \"" + escape_quoted(no_th[labels[i]])
                          + "\" shape = ellipse]\n";
     }
   }
   else {
-    s += "  " + pos + " [label = \"" + no_sym[feature] + "\"]\n";
+    s += "  " + pos + " [label = \"" + escape_quoted(no_sym[feature]) + "\"]\n";
     s += "  " + pos + " -> " + pos + "l\n";
     s += "  " + pos + " -> " + pos + "r\n";
     s +=  left->dot(pos + "l", no_th, no_sym);

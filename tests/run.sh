@@ -131,6 +131,19 @@ if [ -z "$msg" ]; then
     msg="dependencies of t with escaped ids gave '$out', stderr '$(cat "$WORK/stderr")'"
   fi
 fi
+if [ -z "$msg" ]; then
+  # rforest's exported trees keep features and ids with quotes and newlines
+  corpus forest $'a\nb\nc\nd\ne"f\n' \
+    $'a:"p\\"q", "z"\nb:"z"\nc:"p\\"q", "z"\nd:"z", "p"\ne"f:"n\\nl", "p"\n' ''
+  mkdir "$WORK/trees"
+  q='"p\"q", "z"'
+  a=$(run forest -p rforest -t 1 -x "$WORK/trees" <<<"$q")
+  b=$(run forest -p rforest -t 1 -y "$WORK/trees" <<<"$q")
+  status=$?
+  if [ -z "$a" ] || [ $status -ne 0 ] || [ "$a" != "$b" ]; then
+    msg="rforest ranks '$a' before export and '$b' after import (exit status $status, $(head -1 "$WORK/stderr"))"
+  fi
+fi
 if [ -n "$msg" ]; then fail "escaping" "$msg"; else ok "escaping"; fi
 
 # 5. a dependency later in <seq> than its dependent is kept

@@ -88,6 +88,44 @@ void read_deps(const string &fname, SLMap &th_no, LVecVec &deps) {
   }
 }
 
+// Reads a quoted string whose opening quote [begin] has passed, decoding
+// `\"`, `\\` and `\n`; leaves [begin] after the closing quote.
+string read_quoted(string::iterator &begin, string::iterator end) {
+  string result;
+  while (true) {
+    if (begin == end)
+      exit_error("Features stop with double quote expected!");
+    char c = *begin++;
+    if (c == '"')
+      return result;
+    if (c == '\\') {
+      if (begin == end)
+        exit_error("Features stop with double quote expected!");
+      c = *begin++;
+      if (c == 'n')
+        c = '\n';
+      else if (c != '"' && c != '\\')
+        exit_error(string("Unknown escape `\\") + c + "' in feature!");
+    }
+    result.push_back(c);
+  }
+}
+
+// The inverse of read_quoted, without the quotes.
+string escape_quoted(const string &s) {
+  string result;
+  for (const char c : s)
+    if (c == '"' || c == '\\') {
+      result.push_back('\\');
+      result.push_back(c);
+    }
+    else if (c == '\n')
+      result += "\\n";
+    else
+      result.push_back(c);
+  return result;
+}
+
 // parses strings of the format:
 // "string1", "string2", ..., "stringn"
 // where a string writes `"` as `\"`, `\` as `\\` and a newline as `\n`.
@@ -101,25 +139,8 @@ vector<pair<string, double> > parse_string_list(string::iterator begin,
     if (*begin != '"')
       exit_error("Feature start with double quote expected!");
 
-    string feature;
     ++begin;
-    while (true) {
-      if (begin == end)
-        exit_error("Features stop with double quote expected!");
-      char c = *begin++;
-      if (c == '"')
-        break;
-      if (c == '\\') {
-        if (begin == end)
-          exit_error("Features stop with double quote expected!");
-        c = *begin++;
-        if (c == 'n')
-          c = '\n';
-        else if (c != '"' && c != '\\')
-          exit_error(string("Unknown escape `\\") + c + "' in feature!");
-      }
-      feature.push_back(c);
-    }
+    const string feature = read_quoted(begin, end);
 
     double weight = 1.0;
     if (begin != end && *begin == '@') {
