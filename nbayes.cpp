@@ -20,10 +20,11 @@ typedef long sample_t;
 //
 // where a_{i,f} = idf_f (ln(5 s_f / t) + 18) and C = -sum_{f in G} 18 w_f
 // idf_f, and both scorers compute it in this form, so that they round alike:
-// the b terms are summed exactly (Exact), the a terms in increasing feature
-// order, and C, which is the same for every theorem, is added after ranking.
+// the b terms are rounded to a fixed point and summed exactly (Exact), the a
+// terms in increasing feature order, and C, which is the same for every
+// theorem, is added after ranking.
 // With [dense], score() sums over every theorem and every feature in S.
-// Otherwise B_i, the exact sum of b_{i,f} over all of S, and (i, a_{i,f},
+// Otherwise B_i, the sum of b_{i,f} over all of S, and (i, a_{i,f},
 // b_{i,f}) in a posting list per feature f are computed once after learning,
 // so a query reads only the postings of its own features and subtracts their
 // b terms from B_i.
@@ -40,10 +41,11 @@ class NaiveBayes : public Predictor {
       long no_adv) const;
 
   private:
-    // b terms in units of 2^-64, so that sums of them are exact
-    typedef __int128 Exact;
-    static Exact exact(double x) { return (Exact)ldexp(x, 64); }
-    static double inexact(Exact x) { return ldexp((double)x, -64); }
+    // b terms rounded to whole units of 2^-32, so that sums of them are
+    // exact; they lie within a few hundred units of 1 apiece
+    typedef long long Exact;
+    static Exact exact(double x) { return llround(ldexp(x, 32)); }
+    static double inexact(Exact x) { return ldexp((double)x, -32); }
 
     double a_term(sample_t i, feature_t f, long s) const;
     Exact b_term(sample_t i, feature_t f, long s) const;

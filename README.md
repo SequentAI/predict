@@ -98,7 +98,7 @@ a theorem splits into a part that depends only on the learned statistics,
 computed once after learning, and one term per query feature that the theorem
 has statistics for; these terms are kept in a list per feature, so a query
 reads only the lists of its own features rather than every theorem. The
-statistics-only terms are summed exactly, in fixed point, so the score does
+statistics-only terms are rounded to multiples of 2^-32 and summed exactly, so the score does
 not depend on the order of the summation, and theorems whose scores are equal
 in exact arithmetic tie.
 
