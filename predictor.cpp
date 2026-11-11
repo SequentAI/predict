@@ -15,6 +15,10 @@ class Predictor {
 
     LDPairVec predict(long i, long maxth, long no_adv);
     virtual LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const = 0;
+    // Predicts for a query of (feature, weight) pairs. Predictors that do not
+    // use weights treat every weight as 1.0.
+    virtual LDPairVec predict_weighted(const LDPairVec& query, long maxth,
+      long no_adv) const;
 
     void set_tables(SVec no_th, SVec no_sym, SLMap th_no, SLMap sym_no);
 
@@ -39,7 +43,14 @@ Predictor::Predictor(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num)
   : deps(deps), syms(syms), sym_ths(sym_ths) {}
 
 void Predictor::learn_all() {
-  learn(0, syms.size() - 1);
+  learn(0, syms.size());
+}
+
+LDPairVec Predictor::predict_weighted(const LDPairVec& query, long maxth,
+  long no_adv) const {
+  LVec csyms;
+  for (const auto& q : query) csyms.push_back(q.first);
+  return predict(csyms, maxth, no_adv);
 }
 
 LDPairVec Predictor::predict(long i, long maxth, long n_predictions) {
@@ -53,8 +64,11 @@ void Predictor::set_tables(SVec no_th, SVec no_sym, SLMap th_no, SLMap sym_no) {
   this->sym_no = sym_no;
 }
 
+// higher scores first; equal scores in theorem order, so that rankings do
+// not depend on the sort implementation
 inline bool sortfun (pair<long,double> i, pair<long,double> j) {
-  return (j.second < i.second);
+  return (j.second < i.second) ||
+         (j.second == i.second && i.first < j.first);
 }
 
 // sort the theorem-probability table such that the first n_predictions

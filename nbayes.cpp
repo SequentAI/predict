@@ -12,9 +12,11 @@ class NaiveBayes : public Predictor {
 
     void learn(long from, long to);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
+    LDPairVec predict_weighted(const LDPairVec& query, long maxth,
+      long no_adv) const;
 
   private:
-    double score(sample_t i, set<feature_t> symsh) const;
+    double score(sample_t i, map<feature_t, double> symh) const;
 
     void learn(const LVec& csyms, sample_t i, const LVec& cdeps);
     void add_sample_freqs(const LVec& csyms, sample_t i, long weight);
@@ -42,10 +44,17 @@ void NaiveBayes::learn(sample_t from, sample_t to) {
 }
 
 LDPairVec NaiveBayes::predict(const LVec &csyms, sample_t maxth, long no_adv) const {
+  LDPairVec query;
+  for (const auto f : csyms) query.push_back(make_pair(f, 1.0));
+  return predict_weighted(query, maxth, no_adv);
+}
+
+LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
+  long no_adv) const {
   LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
 
-  // set of query features
-  set<long> symh(csyms.begin(), csyms.end());
+  // query features and their weights
+  map<feature_t, double> symh(query.begin(), query.end());
 
   for(long i = 0; i < maxth; ++i) {
     ans[i].first  = i;
@@ -56,7 +65,7 @@ LDPairVec NaiveBayes::predict(const LVec &csyms, sample_t maxth, long no_adv) co
   return ans;
 }
 
-double NaiveBayes::score(sample_t i, set<feature_t> symh) const {
+double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
   // number of times current theorem was used as dependency
   const long n      = tfreq[i];
   const auto sfreqh = sfreq[i];
@@ -70,15 +79,18 @@ double NaiveBayes::score(sample_t i, set<feature_t> symh) const {
     double sfreqv = sv.second;
 
     // if sv.first exists in query features
-    if (symh.erase(sv.first) == 1)
-      s += tfidf.get(sv.first) * log (5 * sfreqv / n);
+    const auto q = symh.find(sv.first);
+    if (q != symh.end()) {
+      s += q->second * tfidf.get(sv.first) * log (5 * sfreqv / n);
+      symh.erase(q);
+    }
     else
       s += tfidf.get(sv.first) * 0.2 * log (1 + (1 - sfreqv) / n);
   }
 
   // for all query features that did not appear in features of dependencies
   // of current theorem
-  for (const auto f : symh) s -= tfidf.get(f) * 18;
+  for (const auto& f : symh) s -= f.second * tfidf.get(f.first) * 18;
 
   return s;
 }

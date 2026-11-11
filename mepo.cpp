@@ -15,6 +15,7 @@ double cosine(const LDMap &syms1, const LVec &syms2,
     if (got != syms1.end())
       sig += sq(tw) * got->second;
   }
+  if (sig1 == 0 || sig2 == 0) return 0;
   return (sq(sig) / (sig1 * sig2));
   // for jaccard use:
   // return (sig / (sig1 + sig2 + sig));
