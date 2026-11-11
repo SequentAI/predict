@@ -11,19 +11,22 @@ typedef long sample_t;
 // i scores
 //
 //   30 ln t + sum_{f in S & G} w_f idf_f ln(5 s_f / t)
-//           + sum_{f in S \ G} 0.2 idf_f ln(1 + (1 - s_f) / t)
-//           - sum_{f in G \ S} 18 w_f idf_f.
+//           + sum_{f in S \ G} b_{i,f}
+//           - sum_{f in G \ S} 18 w_f idf_f,
 //
-// score() computes this directly, over every theorem and every feature in S.
-// Unless [dense], predictions instead use the equal form
+// where b_{i,f} = 0.2 idf_f ln(1 + (1 - s_f) / t). This equals
 //
-//   B_i + C + sum_{f in S & G} (w_f a_{i,f} - b_{i,f}),
+//   (30 ln t + sum_{f in S \ G} b_{i,f}) + sum_{f in S & G} w_f a_{i,f} + C,
 //
-// where b_{i,f} = 0.2 idf_f ln(1 + (1 - s_f) / t), a_{i,f} = idf_f
-// (ln(5 s_f / t) + 18), B_i = 30 ln t + sum_{f in S} b_{i,f} and
-// C = -sum_{f in G} 18 w_f idf_f. B_i, and (i, a_{i,f}, b_{i,f}) in a
-// posting list per feature f, are computed once after learning, so a query
-// reads only the postings of its own features.
+// where a_{i,f} = idf_f (ln(5 s_f / t) + 18) and C = -sum_{f in G} 18 w_f
+// idf_f, and both scorers compute it in this form, so that they round alike:
+// the b terms are summed exactly (Exact), the a terms in increasing feature
+// order, and C, which is the same for every theorem, is added after ranking.
+// With [dense], score() sums over every theorem and every feature in S.
+// Otherwise B_i, the exact sum of b_{i,f} over all of S, and (i, a_{i,f},
+// b_{i,f}) in a posting list per feature f are computed once after learning,
+// so a query reads only the postings of its own features and subtracts their
+// b terms from B_i.
 class NaiveBayes : public Predictor {
   public:
     // A theorem's dependencies learn its features only for the first
@@ -37,7 +40,15 @@ class NaiveBayes : public Predictor {
       long no_adv) const;
 
   private:
-    double score(sample_t i, map<feature_t, double> symh) const;
+    // b terms in units of 2^-64, so that sums of them are exact
+    typedef __int128 Exact;
+    static Exact exact(double x) { return (Exact)ldexp(x, 64); }
+    static double inexact(Exact x) { return ldexp((double)x, -64); }
+
+    double a_term(sample_t i, feature_t f, long s) const;
+    Exact b_term(sample_t i, feature_t f, long s) const;
+    // the score without C
+    double score(sample_t i, const map<feature_t, double>& symh) const;
 
     void learn(const LVec& csyms, sample_t i, const LVec& cdeps);
     void add_sample_freqs(const LVec& csyms, sample_t i, long weight);
@@ -54,10 +65,14 @@ class NaiveBayes : public Predictor {
 
     struct Posting {
       sample_t i;
-      double a, b;
+      double a;
+      Exact b;
     };
     // base[i] = B_i
-    vector<double> base;
+    vector<Exact> base;
+    // log_t30[i] = 30 ln t, base_score[i] = 30 ln t + B_i (the score without
+    // C when S & G is empty)
+    vector<double> log_t30, base_score;
     // postings[post_start[f], post_start[f + 1]) are those of feature f, in
     // increasing order of i
     vector<Posting> postings;
@@ -96,23 +111,26 @@ void NaiveBayes::index() {
   postings.resize(post_start[sym_num]);
 
   vector<size_t> next(post_start.begin(), post_start.end() - 1);
-  base.resize(n);
-  vector<pair<feature_t, long> > sv;
+  base.assign(n, 0);
+  log_t30.resize(n);
+  base_score.resize(n);
   for (sample_t i = 0; i < n; ++i) {
-    const long t = tfreq[i];
-    base[i] = 30 * log(t);
-    // in feature order, so that theorems with equal statistics get equal
-    // baselines
-    sv.assign(sfreq[i].begin(), sfreq[i].end());
-    sort(sv.begin(), sv.end());
-    for (const auto& fs : sv) {
-      const double idf = tfidf.get(fs.first);
-      const double s = fs.second;
-      const double b = idf * 0.2 * log(1 + (1 - s) / t);
+    for (const auto& fs : sfreq[i]) {
+      const Exact b = b_term(i, fs.first, fs.second);
       base[i] += b;
-      postings[next[fs.first]++] = {i, idf * (log(5 * s / t) + 18), b};
+      postings[next[fs.first]++] = {i, a_term(i, fs.first, fs.second), b};
     }
+    log_t30[i] = 30 * log(tfreq[i]);
+    base_score[i] = log_t30[i] + inexact(base[i]);
   }
+}
+
+double NaiveBayes::a_term(sample_t i, feature_t f, long s) const {
+  return tfidf.get(f) * (log(5 * (double)s / tfreq[i]) + 18);
+}
+
+NaiveBayes::Exact NaiveBayes::b_term(sample_t i, feature_t f, long s) const {
+  return exact(tfidf.get(f) * 0.2 * log(1 + (1 - (double)s) / tfreq[i]));
 }
 
 LDPairVec NaiveBayes::predict(const LVec &csyms, sample_t maxth, long no_adv) const {
@@ -124,74 +142,57 @@ LDPairVec NaiveBayes::predict(const LVec &csyms, sample_t maxth, long no_adv) co
 LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
   long no_adv) const {
   LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
-
-  if (dense) {
-    // query features and their weights
-    map<feature_t, double> symh(query.begin(), query.end());
-
-    for(long i = 0; i < maxth; ++i) {
-      ans[i].first  = i;
-      ans[i].second = score(i, symh);
-    }
-
-    sort_prediction(ans, no_adv);
-    return ans;
-  }
-
-  for (long i = 0; i < maxth; ++i)
-    ans[i] = make_pair(i, base[i]);
-
-  // in feature order, so that theorems with equal statistics get equal scores
-  LDPairVec sorted(query);
-  sort(sorted.begin(), sorted.end());
+  map<feature_t, double> symh(query.begin(), query.end());
   double c = 0;
-  for (const auto& fw : sorted) {
-    const double w = fw.second;
-    c += w * tfidf.get(fw.first) * 18;
-    for (size_t p = post_start[fw.first]; p < post_start[fw.first + 1]; ++p) {
-      const Posting& post = postings[p];
-      if (post.i >= maxth)
-        break;
-      ans[post.i].second += w * post.a - post.b;
-    }
+  for (const auto& fw : symh)
+    c += fw.second * tfidf.get(fw.first) * 18;
+
+  if (dense)
+    for (long i = 0; i < maxth; ++i)
+      ans[i] = make_pair(i, score(i, symh));
+  else {
+    for (long i = 0; i < maxth; ++i)
+      ans[i] = make_pair(i, base_score[i]);
+    // for the theorems with S & G nonempty, the b and a terms of S & G
+    vector<Exact> b(maxth);
+    vector<double> a(maxth);
+    vector<char> hit(maxth);
+    vector<sample_t> hits;
+    for (const auto& fw : symh)
+      for (size_t p = post_start[fw.first]; p < post_start[fw.first + 1]; ++p) {
+        const Posting& post = postings[p];
+        if (post.i >= maxth)
+          break;
+        if (!hit[post.i]) {
+          hit[post.i] = 1;
+          hits.push_back(post.i);
+        }
+        b[post.i] += post.b;
+        a[post.i] += fw.second * post.a;
+      }
+    for (const auto i : hits)
+      ans[i].second = (log_t30[i] + inexact(base[i] - b[i])) + a[i];
   }
 
-  // C is the same for every theorem; adding it after ranking keeps it from
-  // rounding apart scores that differ only in their last bits
   sort_prediction(ans, no_adv);
   for (long j = 0; j < no_adv; ++j)
     ans[j].second -= c;
   return ans;
 }
 
-double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
-  // number of times current theorem was used as dependency
-  const long n      = tfreq[i];
-  const auto sfreqh = sfreq[i];
-
-  double s = 30 * log(n);
-
-  for (const auto& sv : sfreqh) {
-    // sv.first ranges over all features of theorems depending on i
-    // sv.second is the number of times sv.first appears among theorems
-    // depending on i
-    double sfreqv = sv.second;
-
-    // if sv.first exists in query features
-    const auto q = symh.find(sv.first);
-    if (q != symh.end()) {
-      s += q->second * tfidf.get(sv.first) * log (5 * sfreqv / n);
-      symh.erase(q);
-    }
-    else
-      s += tfidf.get(sv.first) * 0.2 * log (1 + (1 - sfreqv) / n);
+// The score without C, from the definitions rather than the index
+double NaiveBayes::score(sample_t i, const map<feature_t, double>& symh) const {
+  Exact b = 0;
+  for (const auto& fs : sfreq[i])
+    if (!symh.count(fs.first))
+      b += b_term(i, fs.first, fs.second);
+  double a = 0;
+  for (const auto& fw : symh) {
+    const auto fs = sfreq[i].find(fw.first);
+    if (fs != sfreq[i].end())
+      a += fw.second * a_term(i, fs->first, fs->second);
   }
-
-  // for all query features that did not appear in features of dependencies
-  // of current theorem
-  for (const auto& f : symh) s -= f.second * tfidf.get(f.first) * 18;
-
-  return s;
+  return (30 * log(tfreq[i]) + inexact(b)) + a;
 }
 
 void add_sym(unordered_map <feature_t, long> &m, feature_t sym, long w) {

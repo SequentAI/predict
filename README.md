@@ -97,11 +97,15 @@ theorem lends its features to only the first 20 dependencies listed for it in
 a theorem splits into a part that depends only on the learned statistics,
 computed once after learning, and one term per query feature that the theorem
 has statistics for; these terms are kept in a list per feature, so a query
-reads only the lists of its own features rather than every theorem.
+reads only the lists of its own features rather than every theorem. The
+statistics-only terms are summed exactly, in fixed point, so the score does
+not depend on the order of the summation, and theorems whose scores are equal
+in exact arithmetic tie.
 
 `cosine` scores a theorem by the cosine between its TF-IDF vector and the
 query's: the coordinate of a feature is its IDF in the theorem's vector, and
-its IDF times its weight in the query's. The dot products are summed over the
+its IDF times its weight in the query's, which makes scaling every weight
+alike leave the scores unchanged. The dot products are summed over the
 theorems containing each query feature. Theorems sharing no feature with the
 query score 0.
 

@@ -245,6 +245,20 @@ if [ -z "$msg" ]; then
     msg="nbayes top predictions '$a' and '$b' do not follow the weights"
   fi
 fi
+if [ -z "$msg" ]; then
+  # scaling every weight alike leaves cosine scores unchanged, also where the
+  # squared weight overflows or underflows
+  corpus scale $'b\na\n' $'b:"y"\na:"x"\n' ''
+  for m in cosine cosine-dense; do
+    for w in 1e200 1e-200; do
+      out=$(run scale -p $m -n 2 -S <<<"\"x\"@$w")
+      if [ "$out" != "a (1) b (0) " ]; then
+        msg="$m gave '$out' for \"x\"@$w"
+        break 2
+      fi
+    done
+  done
+fi
 if [ -n "$msg" ]; then fail "query weights" "$msg"; else ok "query weights"; fi
 
 # 8. the number of dependencies naive Bayes learns
@@ -272,13 +286,14 @@ done
 if [ -n "$msg" ]; then fail "naive Bayes dependency limit" "$msg"; else ok "naive Bayes dependency limit"; fi
 
 # same <name> <method> <reference> <n> <query file> [options...]: succeeds if
-# both methods give the same ranking of the n best theorems for every query
+# both methods give the same ranking of the n best theorems, with the same
+# scores, for every query
 same() {
   local name=$1 m=$2 ref=$3 n=$4 queries=$5
   shift 5
   local a b
-  a=$(run $name -p $m -n $n "$@" < "$queries") || return 1
-  b=$(run $name -p $ref -n $n "$@" < "$queries") || return 1
+  a=$(run $name -p $m -n $n -S "$@" < "$queries") || return 1
+  b=$(run $name -p $ref -n $n -S "$@" < "$queries") || return 1
   [ -n "$a" ] && [ "$a" = "$b" ]
 }
 
@@ -296,6 +311,16 @@ weight "$DATA/lists.queries" > "$WORK/lists.wqueries"
 python3 "$TESTS/gen.py" "$WORK/synth" 5000 20 2000 1
 for i in $(seq 0 50 4999); do echo "t$i"; done > "$WORK/synth.eval"
 cat "$WORK/synth.queries" "$WORK/synth.wqueries" > "$WORK/synth.all"
+corpus ties "$(printf 't%s\n' 0 1 2 3 4 5 6 7)" \
+  't0:
+t1:"f0"
+t2:"f3", "f1"
+t3:"f3"
+t4:
+t5:"f3"
+t6:"f3"
+t7:"f1", "f3"
+' ''
 number=9
 for m in nbayes cosine; do
   msg=
@@ -304,17 +329,12 @@ for m in nbayes cosine; do
   done
   same synth $m $m-dense 5000 "$WORK/synth.all" || msg="$msg synth.queries+wqueries"
   same synth $m $m-dense 5000 /dev/null -e "$WORK/synth.eval" || msg="$msg synth.eval"
-  # the scores agree up to rounding
-  for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do
-    run lists -p $m -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/sparse"
-    run lists -p $m-dense -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/dense"
-    paste "$WORK/sparse" "$WORK/dense" | awk -F'\t' '
-      $1 ~ /^\(/ { a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
-                   if (d < 0) d = -d; m = b < 0 ? -b : b
-                   if (d > 1e-9 * (m + 1)) bad = 1; next }
-      $1 != $2 { bad = 1 }
-      END { exit bad || NR < 16 }' || msg="$msg scores($(basename "$q"))"
-  done
+  # every theorem's features are in the query, with weight 0: naive Bayes
+  # scores every theorem 30 ln 1000 and cosine 0, so both rank in <seq> order
+  echo '"f0"@0, "f1"@0, "f3"@0' > "$WORK/ties.queries"
+  same ties $m $m-dense 8 "$WORK/ties.queries" || msg="$msg ties"
+  [ "$(run ties -p $m -n 8 < "$WORK/ties.queries")" = "t0 t1 t2 t3 t4 t5 t6 t7 " ] ||
+    msg="$msg ties(order)"
   if [ -n "$msg" ]; then
     fail "$m equals $m-dense" "rankings differ on$msg"
   else
