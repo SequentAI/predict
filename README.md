@@ -19,9 +19,9 @@ make test            # runs tests/run.sh against ./predict and against a
 the test corpus in `tests/data/`; `make test` compares against them, and `make
 golden` rewrites them after an intended ranking change. The tests also check
 that `nbayes` and `cosine` rank exactly as `nbayes-dense` and `cosine-dense`,
-which compute the same scores by scanning every theorem, on the test corpus
-and on a synthetic corpus that `tests/gen.py` writes (the tests need
-`python3`). The version string in
+which compute the same scores, up to rounding, by scanning every theorem, on
+the test corpus and on a synthetic corpus that `tests/gen.py` writes (the
+tests need `python3`). The version string in
 `main.cpp` is raised by every change to rankings, options or formats, so a
 build from a source archive still says what it is.
 
@@ -98,9 +98,9 @@ a theorem splits into a part that depends only on the learned statistics,
 computed once after learning, and one term per query feature that the theorem
 has statistics for; these terms are kept in a list per feature, so a query
 reads only the lists of its own features rather than every theorem. The
-statistics-only terms are rounded to multiples of 2^-32 and summed exactly, so the score does
-not depend on the order of the summation, and theorems whose scores are equal
-in exact arithmetic tie.
+statistics-only terms are summed exactly, in units of 2^-64, so that removing
+the query features' terms from a theorem's sum leaves exactly the sum of the
+others.
 
 `cosine` scores a theorem by the cosine between its TF-IDF vector and the
 query's: the coordinate of a feature is its IDF in the theorem's vector, and

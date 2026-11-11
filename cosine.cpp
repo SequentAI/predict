@@ -68,17 +68,18 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
   // query features in increasing order with their terms w idf^2 in the dot
   // product. Scaling every weight alike leaves the cosine unchanged, so the
-  // weights are divided by the largest to keep w^2 from overflowing or
-  // underflowing.
+  // weights are divided by the largest one of a feature with nonzero IDF (the
+  // others' coordinates are 0), to keep w^2 from overflowing or underflowing.
   LDPairVec terms(query);
   sort(terms.begin(), terms.end());
   double wmax = 0;
   for (const auto& ft : terms)
-    wmax = max(wmax, ft.second);
+    if (tfidf.get(ft.first) != 0)
+      wmax = max(wmax, ft.second);
   double qnorm2 = 0;
   for (auto& ft : terms) {
     const double idf = tfidf.get(ft.first);
-    const double w = wmax > 0 ? ft.second / wmax : 0;
+    const double w = idf != 0 && wmax > 0 ? ft.second / wmax : 0;
     qnorm2 += w * w * (idf * idf);
     ft.second = w * (idf * idf);
   }

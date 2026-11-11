@@ -248,12 +248,13 @@ fi
 if [ -z "$msg" ]; then
   # scaling every weight alike leaves cosine scores unchanged, also where the
   # squared weight overflows or underflows
-  corpus scale $'b\na\n' $'b:"y"\na:"x"\n' ''
+  # or where the largest weight is that of a feature every theorem has
+  corpus scale $'b\na\n' $'b:"y", "z"\na:"x", "z"\n' ''
   for m in cosine cosine-dense; do
-    for w in 1e200 1e-200; do
-      out=$(run scale -p $m -n 2 -S <<<"\"x\"@$w")
+    for q in '"x"@1e200' '"x"@1e-200' '"z"@1e200, "x"' '"z", "x"@1e-200'; do
+      out=$(run scale -p $m -n 2 -S <<<"$q")
       if [ "$out" != "a (1) b (0) " ]; then
-        msg="$m gave '$out' for \"x\"@$w"
+        msg="$m gave '$out' for $q"
         break 2
       fi
     done
@@ -286,14 +287,13 @@ done
 if [ -n "$msg" ]; then fail "naive Bayes dependency limit" "$msg"; else ok "naive Bayes dependency limit"; fi
 
 # same <name> <method> <reference> <n> <query file> [options...]: succeeds if
-# both methods give the same ranking of the n best theorems, with the same
-# scores, for every query
+# both methods give the same ranking of the n best theorems for every query
 same() {
   local name=$1 m=$2 ref=$3 n=$4 queries=$5
   shift 5
   local a b
-  a=$(run $name -p $m -n $n -S "$@" < "$queries") || return 1
-  b=$(run $name -p $ref -n $n -S "$@" < "$queries") || return 1
+  a=$(run $name -p $m -n $n "$@" < "$queries") || return 1
+  b=$(run $name -p $ref -n $n "$@" < "$queries") || return 1
   [ -n "$a" ] && [ "$a" = "$b" ]
 }
 
@@ -321,6 +321,7 @@ t5:"f3"
 t6:"f3"
 t7:"f1", "f3"
 ' ''
+corpus near $'a\nb\nc\n' $'a:"x", "y"\nb:\nc:"y"\n' ''
 number=9
 for m in nbayes cosine; do
   msg=
@@ -335,6 +336,23 @@ for m in nbayes cosine; do
   same ties $m $m-dense 8 "$WORK/ties.queries" || msg="$msg ties"
   [ "$(run ties -p $m -n 8 < "$WORK/ties.queries")" = "t0 t1 t2 t3 t4 t5 t6 t7 " ] ||
     msg="$msg ties(order)"
+  # naive Bayes scores a above b by about 4e-11, which a sum rounded to
+  # coarser than a double would lose
+  echo '"x"@0.026002243966793848' > "$WORK/near.queries"
+  same near $m $m-dense 3 "$WORK/near.queries" || msg="$msg near"
+  [ $m = cosine ] || [ "$(run near -p $m -n 3 < "$WORK/near.queries")" = "a b c " ] ||
+    msg="$msg near(order)"
+  # the scores agree up to rounding
+  for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do
+    run lists -p $m -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/sparse"
+    run lists -p $m-dense -n 16 -S < "$q" | tr ' ' '\n' > "$WORK/dense"
+    paste "$WORK/sparse" "$WORK/dense" | awk -F'\t' '
+      $1 ~ /^\(/ { a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
+                   if (d < 0) d = -d; m = b < 0 ? -b : b
+                   if (d > 1e-9 * (m + 1)) bad = 1; next }
+      $1 != $2 { bad = 1 }
+      END { exit bad || NR < 16 }' || msg="$msg scores($(basename "$q"))"
+  done
   if [ -n "$msg" ]; then
     fail "$m equals $m-dense" "rankings differ on$msg"
   else
