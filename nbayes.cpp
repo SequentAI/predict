@@ -17,15 +17,17 @@ typedef long sample_t;
 // score() computes this directly, over every theorem and every feature in S.
 // Unless [dense], predictions instead use the equal form
 //
-//   (30 ln t + B_i - sum_{f in S & G} b_{i,f}) + sum_{f in S & G} w_f a_{i,f}
-//     + C,
+//   B_i + C + sum_{f in S & G} (w_f a_{i,f} - b_{i,f}),
 //
 // where b_{i,f} = 0.2 idf_f ln(1 + (1 - s_f) / t), a_{i,f} = idf_f
-// (ln(5 s_f / t) + 18), B_i = sum_{f in S} b_{i,f} and C = -sum_{f in G} 18
-// w_f idf_f. B_i, and (i, a_{i,f}, b_{i,f}) in a posting list per feature f,
-// are computed once after learning, so a query reads only the postings of its
-// own features. The b terms are summed in fixed point, which is exact, so
-// that subtracting them from B_i leaves exactly the sum over S \ G.
+// (ln(5 s_f / t) + 18), B_i = 30 ln t + sum_{f in S} b_{i,f} and
+// C = -sum_{f in G} 18 w_f idf_f. B_i, and (i, a_{i,f}, b_{i,f}) in a
+// posting list per feature f, are computed once after learning, so a query
+// reads only the postings of its own features.
+//
+// The two forms round differently, so where the sparse one puts scores within
+// a margin far wider than either's rounding error of each other, score()
+// settles their order: predictions are those score() gives, ties included.
 class NaiveBayes : public Predictor {
   public:
     // A theorem's dependencies learn its features only for the first
@@ -40,16 +42,8 @@ class NaiveBayes : public Predictor {
 
   private:
     double score(sample_t i, map<feature_t, double> symh) const;
-
-    // b terms in units of 2^-64: far finer than a double's resolution at
-    // the size of a score, and ample for the sum of every b term
-    typedef __int128 Exact;
-    static Exact exact(double x) { return (Exact)ldexp(x, 64); }
-    static double inexact(Exact x) {
-      // the high and low 64 bits, faster than converting the whole
-      return (double)(long long)(x >> 64)
-        + ldexp((double)(unsigned long long)x, -64);
-    }
+    void settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
+      double c) const;
 
     void learn(const LVec& csyms, sample_t i, const LVec& cdeps);
     void add_sample_freqs(const LVec& csyms, sample_t i, long weight);
@@ -66,13 +60,10 @@ class NaiveBayes : public Predictor {
 
     struct Posting {
       sample_t i;
-      double a;
-      Exact b;
+      double a, b;
     };
-    // base[i] = B_i; log_t30[i] = 30 ln t, and base_score[i] = 30 ln t + B_i,
-    // the score without C of a theorem sharing no feature with the query
-    vector<Exact> base;
-    vector<double> log_t30, base_score;
+    // base[i] = B_i
+    vector<double> base;
     // postings[post_start[f], post_start[f + 1]) are those of feature f, in
     // increasing order of i
     vector<Posting> postings;
@@ -111,20 +102,22 @@ void NaiveBayes::index() {
   postings.resize(post_start[sym_num]);
 
   vector<size_t> next(post_start.begin(), post_start.end() - 1);
-  base.assign(n, 0);
-  log_t30.resize(n);
-  base_score.resize(n);
+  base.resize(n);
+  vector<pair<feature_t, long> > sv;
   for (sample_t i = 0; i < n; ++i) {
-    const double t = tfreq[i];
-    for (const auto& fs : sfreq[i]) {
+    const long t = tfreq[i];
+    base[i] = 30 * log(t);
+    // in feature order, so that theorems with equal statistics get equal
+    // baselines
+    sv.assign(sfreq[i].begin(), sfreq[i].end());
+    sort(sv.begin(), sv.end());
+    for (const auto& fs : sv) {
       const double idf = tfidf.get(fs.first);
       const double s = fs.second;
-      const Exact b = exact(idf * 0.2 * log(1 + (1 - s) / t));
+      const double b = idf * 0.2 * log(1 + (1 - s) / t);
       base[i] += b;
       postings[next[fs.first]++] = {i, idf * (log(5 * s / t) + 18), b};
     }
-    log_t30[i] = 30 * log(t);
-    base_score[i] = log_t30[i] + inexact(base[i]);
   }
 }
 
@@ -152,39 +145,60 @@ LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
   }
 
   for (long i = 0; i < maxth; ++i)
-    ans[i] = make_pair(i, base_score[i]);
+    ans[i] = make_pair(i, base[i]);
 
-  // for the theorems sharing features with the query, the sums of b_{i,f}
-  // and of w_f a_{i,f} over the shared features
-  vector<Exact> b(maxth);
-  vector<double> a(maxth);
-  vector<char> hit(maxth);
-  vector<sample_t> hits;
+  // in feature order, so that theorems with equal statistics get equal scores
+  LDPairVec sorted(query);
+  sort(sorted.begin(), sorted.end());
   double c = 0;
-  for (const auto& fw : query) {
+  for (const auto& fw : sorted) {
     const double w = fw.second;
     c += w * tfidf.get(fw.first) * 18;
     for (size_t p = post_start[fw.first]; p < post_start[fw.first + 1]; ++p) {
       const Posting& post = postings[p];
       if (post.i >= maxth)
         break;
-      if (!hit[post.i]) {
-        hit[post.i] = 1;
-        hits.push_back(post.i);
-      }
-      b[post.i] += post.b;
-      a[post.i] += w * post.a;
+      ans[post.i].second += w * post.a - post.b;
     }
   }
-  for (const auto i : hits)
-    ans[i].second = (log_t30[i] + inexact(base[i] - b[i])) + a[i];
 
-  // C is the same for every theorem; adding it after ranking keeps it from
-  // rounding apart scores that differ only in their last bits
-  sort_prediction(ans, no_adv);
-  for (long j = 0; j < no_adv; ++j)
-    ans[j].second -= c;
+  settle(ans, query, no_adv, c);
   return ans;
+}
+
+// Given the sparse scores without C in [ans], puts the best [no_adv] first,
+// in score()'s order. Scores within [margin] of their neighbours may be in
+// the other order under score(), so each run of such scores is scored again
+// with score() and sorted; a run reaching the cutoff is followed into the
+// rest of [ans].
+void NaiveBayes::settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
+  double c) const {
+  if (no_adv == 0)
+    return;
+  sort_prediction(ans, no_adv);
+  const double cutoff = ans[no_adv - 1].second;
+  const double margin =
+    1e-9 * (fabs(ans[0].second) + fabs(cutoff) + fabs(c) + 1);
+  // the rest within the margin of the cutoff, sorted, after the best
+  const auto end = partition(ans.begin() + no_adv, ans.end(),
+    [&](const pair<long, double>& p) { return p.second >= cutoff - margin; });
+  sort(ans.begin() + no_adv, end, sortfun);
+
+  const map<feature_t, double> symh(query.begin(), query.end());
+  auto run = ans.begin();
+  while (run < ans.begin() + no_adv) {
+    auto next = run + 1;
+    while (next < end && (next - 1)->second - next->second <= margin)
+      ++next;
+    if (next - run == 1)
+      run->second -= c;
+    else {
+      for (auto p = run; p < next; ++p)
+        p->second = score(p->first, symh);
+      sort(run, next, sortfun);
+    }
+    run = next;
+  }
 }
 
 double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {

@@ -336,11 +336,14 @@ for m in nbayes cosine; do
   same ties $m $m-dense 8 "$WORK/ties.queries" || msg="$msg ties"
   [ "$(run ties -p $m -n 8 < "$WORK/ties.queries")" = "t0 t1 t2 t3 t4 t5 t6 t7 " ] ||
     msg="$msg ties(order)"
-  # naive Bayes scores a above b by about 4e-11, which a sum rounded to
-  # coarser than a double would lose
-  echo '"x"@0.026002243966793848' > "$WORK/near.queries"
+  # the tie crosses the cutoff
+  same ties $m $m-dense 3 "$WORK/ties.queries" || msg="$msg ties(-n 3)"
+  # naive Bayes scores a above b by about 4e-11 for the first query, and
+  # equal to it for the second; rounding apart from the scan over every
+  # theorem would swap them
+  printf '%s\n' '"x"@0.026002243966793848' '"x"@0.026002243965038505' > "$WORK/near.queries"
   same near $m $m-dense 3 "$WORK/near.queries" || msg="$msg near"
-  [ $m = cosine ] || [ "$(run near -p $m -n 3 < "$WORK/near.queries")" = "a b c " ] ||
+  [ $m = cosine ] || [ "$(run near -p $m -n 3 < "$WORK/near.queries")" = "a b c "$'\n'"a b c " ] ||
     msg="$msg near(order)"
   # the scores agree up to rounding
   for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do

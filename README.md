@@ -97,10 +97,11 @@ theorem lends its features to only the first 20 dependencies listed for it in
 a theorem splits into a part that depends only on the learned statistics,
 computed once after learning, and one term per query feature that the theorem
 has statistics for; these terms are kept in a list per feature, so a query
-reads only the lists of its own features rather than every theorem. The
-statistics-only terms are summed exactly, in units of 2^-64, so that removing
-the query features' terms from a theorem's sum leaves exactly the sum of the
-others.
+reads only the lists of its own features rather than every theorem. This
+rounds differently from the scan over every theorem (kept as `nbayes-dense`),
+so theorems whose scores come within a relative 1e-9 of each other are scored
+again as the scan scores them: the two give the same predictions, ties
+included.
 
 `cosine` scores a theorem by the cosine between its TF-IDF vector and the
 query's: the coordinate of a feature is its IDF in the theorem's vector, and
