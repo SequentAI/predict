@@ -79,8 +79,15 @@ fi
 number=3
 corpus empty $'c\nd\na\nb\n' $'c:"x"\nd:"y"\na:\nb:\n' $'d:c\n'
 printf 'b\n' > "$WORK/empty.eval"
+corpus lone $'a\n' $'a:\n' ''
 msg=
-for m in knn nbayes mepo; do
+out=$(run lone -p rforest -n 1 <<<'')
+status=$?
+if [ $status -ne 0 ] || [ "$out" != "a " ]; then
+  msg="rforest on a featureless one-theorem corpus: exit status $status, '$out'"
+fi
+for m in knn nbayes mepo rforest; do
+  [ -n "$msg" ] && break
   out=$(run empty -p $m -n 4 -S <<<'')
   status=$?
   if [ $status -ne 0 ]; then
@@ -130,11 +137,34 @@ if [ -n "$msg" ]; then fail "escaping" "$msg"; else ok "escaping"; fi
 number=5
 corpus future $'a\nb\nc\nd\n' $'a:"x", "y"\nb:"z"\nc:"x"\nd:"w"\n' $'a:b\n'
 out=$(run future -p knn -n 2 <<<'"x", "y"')
+# with -e, predictions for c come only from a and b; a's dependency b is
+# later than a but earlier than c, and must be predicted
+printf 'c\n' > "$WORK/future.eval"
+msg=
 if [ "$out" != "b a " ]; then
-  fail "future dependency" "knn gave '$out', not 'b a' (b is only reachable as a's dependency)"
+  msg="knn gave '$out', not 'b a' (b is only reachable as a's dependency)"
 else
-  ok "future dependency"
+  for m in knn nbayes mepo rforest; do
+    out=$(run future -p $m -n 2 -e "$WORK/future.eval")
+    status=$?
+    if [ $status -ne 0 ] || [[ $out != "c:"[ab]" "[ab]" " ]]; then
+      msg="$m with -e: exit status $status, '$out'"
+      break
+    fi
+  done
 fi
+# a dependency at or after the evaluated theorem is not predicted for it
+corpus ahead $'a\nb\nc\n' $'a:"x"\nb:"y"\nc:"z"\n' $'a:c\n'
+printf 'b\n' > "$WORK/ahead.eval"
+for m in knn nbayes mepo rforest; do
+  [ -n "$msg" ] && break
+  out=$(run ahead -p $m -n 2 -e "$WORK/ahead.eval")
+  status=$?
+  if [ $status -ne 0 ] || [ "$out" != "b:a " ]; then
+    msg="$m with -e and a dependency past the evaluated theorem: exit status $status, '$out'"
+  fi
+done
+if [ -n "$msg" ]; then fail "future dependency" "$msg"; else ok "future dependency"; fi
 
 # 6. repeated features count once
 number=6

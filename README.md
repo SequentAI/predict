@@ -9,7 +9,8 @@ filter (`mepo`) and random forests (`rforest`).
 
 ```sh
 make                 # builds ./predict with g++ -O3 -std=c++17
-make test            # runs tests/run.sh against ./predict
+make test            # runs tests/run.sh against ./predict and against a
+                     # build with address and bounds checking
 ./predict --version
 ```
 
@@ -85,7 +86,7 @@ largest weight, and an empty line is a query with no features.
 - Option parsing works where `char` is unsigned (aarch64).
 - Every method learns the last theorem of `<seq>`.
 - Featureless theorems and empty queries are accepted, and give finite
-  scores in `knn`, `nbayes` and `mepo`.
+  scores in `knn`, `nbayes` and `mepo`; `rforest` accepts them too.
 - Features may contain `"`, `\` and newlines, and ids may contain `:`, as
   escaped above.
 - Dependencies later in `<seq>` than their dependent are kept.
