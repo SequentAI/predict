@@ -1,0 +1,10 @@
+append_nil:append_def nil_def
+nil_append:append_def
+append_assoc:append_def append_nil
+length_nil:length_def
+length_append:length_def append_def
+rev_nil:rev_def
+rev_append:rev_def append_assoc append_nil
+rev_rev:rev_def rev_append rev_nil
+map_append:map_def append_def
+map_rev:map_def rev_def map_append

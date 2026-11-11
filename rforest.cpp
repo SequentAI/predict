@@ -69,9 +69,11 @@ RandomForest::~RandomForest() {
 }
 
 void RandomForest::import_data(string dirname) {
-  for (unsigned i = 0; i < forest.size(); i++)
+  for (unsigned i = 0; i < forest.size(); i++) {
+    delete forest[i];
     forest[i] = new DecisionTree(dirname + "/tree" + to_string(i) + ".dot",
       th_no, sym_no);
+  }
   prelearned = true;
 }
 
@@ -166,6 +168,8 @@ LDPairVec RandomForest::predict(const LVec& csyms, long maxth, long no_adv)
     const LVec& ds = deps[label.first];
     for (const auto& dep : ds) {
         //cerr << dw / pow(labels_ti.get(dep), 3) << endl;
+      if (dep >= maxth) // a dependency from the future
+        continue;
       ans[dep].second += depweight * label.second; // / pow(labels_ti.get(dep), 4);
     }
   }
@@ -338,6 +342,20 @@ void RandomForest::update_tree(DecisionTree *tree, const LVec& new_samples) {
   }
 
   LVec update_samples = new_samples;
+
+  // no sample in the tree has a feature to split on, so the tree is a leaf
+  if (best_f == -1) {
+    tree->add_labels_recursively(update_samples);
+
+    delete tree->left;
+    delete tree->right;
+
+    tree->left  = NULL;
+    tree->right = NULL;
+    tree->labels = update_samples;
+    tree->feature = -1;
+    return;
+  }
 
   if (best_f != tree->feature) {
     tree->add_labels_recursively(update_samples);

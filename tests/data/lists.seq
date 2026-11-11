@@ -1,0 +1,16 @@
+nil_def
+cons_def
+append_def
+append_nil
+nil_append
+append_assoc
+length_def
+length_nil
+length_append
+rev_def
+rev_nil
+rev_append
+rev_rev
+map_def
+map_append
+map_rev

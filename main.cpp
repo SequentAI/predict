@@ -1,10 +1,14 @@
 #include <getopt.h>
+#include <iomanip>
 #include <memory>
 
 #include "knn.cpp"
 #include "mepo.cpp"
 #include "nbayes.cpp"
 #include "rforest.cpp"
+
+// Raise with every change to rankings, options or formats.
+const string version_str = "0.1.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -18,6 +22,7 @@ const string usage_str =
   "  -p <method>  method is either knn, mepo, nbayes, or rforest\n"
   "  -n <i>       i is the number of predictions to output\n"
   "  -e <eval>    eval is an optional file, containing theorems for which we want predictions\n"
+  "  -S           print each prediction's score after it, in parentheses\n"
   "  -x <path>    eXport learned predictor data to path\n"
   "  -y <path>    Ymport learned predictor data from path\n"
   "\n"
@@ -27,41 +32,38 @@ const string usage_str =
   "  -s <n>       number of samples to consider per tree\n"
   "  -f <n>       number of features to consider per tree\n"
   "  -w <n>       dependency weight\n"
-#ifdef COQ_MODE
   "\n"
-  "Predictor compiled in Coq mode.\n";
-#else
-  "";
-#endif
+  "predict --version prints the version.\n";
 
 
 void print_prediction(LDPairVec prediction, long n_predictions,
-  vector<string> no_th) {
+  vector<string> no_th, bool scores) {
   for (long j = 0; j < n_predictions; ++j) {
     // print label
     cout << no_th[prediction[j].first] << " ";
     // print weight
-    //cout << "(" << prediction[j].second << ") ";
+    if (scores)
+      cout << "(" << setprecision(17) << prediction[j].second << ") ";
   }
   cout << endl;
 }
 
 void interaction(unique_ptr<Predictor>& p, long predno,
-  const SLMap& sym_no, const vector<string>& no_th) {
+  const SLMap& sym_no, const vector<string>& no_th, bool scores) {
   p->learn_all();
   cerr << "Learning done; awaiting your features ..." << endl;
 
   string line;
   while (getline(cin, line)) {
-    const LVec symsi = parse_feature_list(line.begin(), line.end(), sym_no);
+    const LDPairVec query = parse_feature_list(line.begin(), line.end(), sym_no);
     long no_adv = min((long)no_th.size(), predno);
-    const LDPairVec ans = p->predict(symsi, no_th.size(), no_adv);
-    print_prediction(ans, no_adv, no_th);
+    const LDPairVec ans = p->predict_weighted(query, no_th.size(), no_adv);
+    print_prediction(ans, no_adv, no_th, scores);
   }
 }
 
 void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
-  SLMap th_no, vector<string> no_th) {
+  SLMap th_no, vector<string> no_th, bool scores) {
   unordered_set<long> eval;
   read_eval(evalf, th_no, eval);
 
@@ -77,7 +79,7 @@ void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
       LDPairVec ans = p->predict(i, i, no_adv);
 
       cout << no_th[i] << ":";
-      print_prediction(ans, no_adv, no_th);
+      print_prediction(ans, no_adv, no_th, scores);
     }
   }
 }
@@ -104,6 +106,10 @@ double atof_check(const char *nptr, const char *desc) {
 
 int main(int argc, char* argv[]) {
   const int MIN_ARGS = 3;
+  if (argc == 2 && string(argv[1]) == "--version") {
+    cout << "predict " << version_str << endl;
+    return EXIT_SUCCESS;
+  }
   if (argc < MIN_ARGS + 1) {
     cerr << usage_str;
     return EXIT_FAILURE;
@@ -127,9 +133,12 @@ int main(int argc, char* argv[]) {
   long n_features = 128;
   double depweight = 1.7;
 
-  char c;
+  // print scores
+  bool scores = false;
+
+  int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "he:n:p:k:t:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "he:n:p:k:St:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
@@ -142,6 +151,9 @@ int main(int argc, char* argv[]) {
         break;
       case 'p':
         method = optarg;
+        break;
+      case 'S':
+        scores = true;
         break;
       case 'x':
         export_path = optarg;
@@ -210,9 +222,9 @@ int main(int argc, char* argv[]) {
 
   // if user did not supply evaluation file
   if (evalf == "")
-    interaction(predictor, predno, sym_no, no_th);
+    interaction(predictor, predno, sym_no, no_th, scores);
   else
-    evaluation(predictor, evalf, predno, th_no, no_th);
+    evaluation(predictor, evalf, predno, th_no, no_th, scores);
 
   if (!export_path.empty())
     predictor->export_data(export_path);

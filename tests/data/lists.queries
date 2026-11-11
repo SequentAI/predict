@@ -1,0 +1,4 @@
+"c:rev", "c:append", "t:list", "p:eq"
+"c:length", "c:rev", "t:num", "p:eq"
+"c:map", "c:append", "c:nil", "t:list"
+"c:plus", "t:num"

@@ -75,6 +75,7 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
     // dependencies of the neighbor also gain some relevance, depending on the
     // number of dependencies of the current theorem
     LVec ds = deps[nn];
+    if (ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
       if (d < maxth) { // in case of future dependencies, do not predict them
