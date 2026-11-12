@@ -237,6 +237,49 @@ LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
   return result;
 }
 
+// Fact statures, as bit flags: a fact may be a simp rule, local to the goal's
+// theory, both or neither.
+const unsigned char STATURE_SIMP = 1, STATURE_LOCAL = 2;
+
+/* Reads the statures of theorems from lines of the format
+   thmid:flag1 flag2 ...
+   where a flag is `simp` or `local`, into [statures], indexed by theorem.
+   Theorems without a line have no flag. */
+void read_statures(const string &fname, const SLMap &th_no,
+                   vector<unsigned char> &statures) {
+  ifstream ic(fname);
+  if (!ic)
+    exit_error("Cannot read statures file `" + fname + "'!");
+  string line;
+  while (getline(ic, line)) {
+    size_t pos = 0;
+    const string thn = read_id(line, pos, ":");
+    if (pos == line.size())
+      exit_error("Expected colon in line `" + line + "'!");
+    ++pos;
+    auto got = th_no.find(thn);
+    if (got == th_no.end()) {
+      cerr << "stature item missing in seq: " << thn << endl;
+      continue;
+    }
+    while (pos < line.size()) {
+      if (line[pos] == ' ') {
+        ++pos;
+        continue;
+      }
+      const size_t stop = min(line.find(' ', pos), line.size());
+      const string flag = line.substr(pos, stop - pos);
+      if (flag == "simp")
+        statures[got->second] |= STATURE_SIMP;
+      else if (flag == "local")
+        statures[got->second] |= STATURE_LOCAL;
+      else
+        exit_error("Unknown stature `" + flag + "' in line `" + line + "'!");
+      pos = stop;
+    }
+  }
+}
+
 void read_eval(const string &fname, unordered_map<string, long> &th_no,
                unordered_set<long> &eval) {
   ifstream ic(fname);
