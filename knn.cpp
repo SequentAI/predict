@@ -3,7 +3,8 @@
 
 class kNN : public Predictor {
   public:
-    kNN(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num);
+    kNN(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+      long sym_num);
 
     void learn(long from, long to);
 
@@ -14,7 +15,8 @@ class kNN : public Predictor {
     Tfidf tfidf;
 };
 
-kNN::kNN(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num)
+kNN::kNN(const LVecVec& deps, const LVecVec& syms,
+  const LVecVec& sym_ths, long sym_num)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num) {
 }
 
@@ -38,15 +40,17 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
   // for each symbol, increase the importance of the theorems which contain
   // the symbol by a given symbol weight
   for (const auto& sym : csyms) {
-    vector<long> ths = sym_ths[sym];
+    const LVec& ths = sym_ths[sym];
     double weight = tfidf.get(sym);
     for (const auto& th : ths) {
       if (th < maxth) ans[th].second += pow(weight, 6);
     }
   }
 
-  LDPairVec neighbours(maxth);
-  partial_sort_copy(ans.begin(), ans.end(), neighbours.begin(), neighbours.end(), sortfun);
+  // neighbours[0, sorted) are the best neighbours in order; the loop below
+  // usually needs few of them, so they are sorted on demand
+  LDPairVec neighbours(ans);
+  long sorted = 0;
   for (auto& a : ans) a.second = 0;
 
 
@@ -63,6 +67,11 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
 
   long no_recommends = 0;
   for (long k = 0; k < maxth && no_recommends < no_adv; ++k) {
+    if (k == sorted) {
+      sorted = min(maxth, max(2 * sorted, no_adv));
+      partial_sort(neighbours.begin() + k, neighbours.begin() + sorted,
+        neighbours.end(), sortfun);
+    }
     long nn = neighbours[k].first;
     double o = neighbours[k].second; // distance, we do not use sqrt
     if (ans[nn].second <= 0) {
@@ -74,7 +83,7 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
 
     // dependencies of the neighbor also gain some relevance, depending on the
     // number of dependencies of the current theorem
-    LVec ds = deps[nn];
+    const LVec& ds = deps[nn];
     if (ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
