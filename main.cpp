@@ -5,6 +5,7 @@
 #include "cosine.cpp"
 #include "knn.cpp"
 #include "mepo.cpp"
+#include "mepo_cosine.cpp"
 #include "nbayes.cpp"
 #include "rforest.cpp"
 
@@ -20,7 +21,7 @@ const string usage_str =
   "  <seq>  is a file containing the order of theorems\n"
   "\n"
   "General options:\n"
-  "  -p <method>  method is either knn, mepo, nbayes, cosine, or rforest\n"
+  "  -p <method>  method is either knn, mepo, mepo-cosine, nbayes, cosine, or rforest\n"
   "  -n <i>       i is the number of predictions to output\n"
   "  -e <eval>    eval is an optional file, containing theorems for which we want predictions\n"
   "  -S           print each prediction's score after it, in parentheses\n"
@@ -238,6 +239,8 @@ int main(int argc, char* argv[]) {
     predictor.reset(new kNN(deps, syms, sym_ths, sym_num));
   else if (method == "mepo")
     predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures));
+  else if (method == "mepo-cosine")
+    predictor.reset(new MePoCosine(deps, syms, sym_ths, sym_num));
   else if (method == "nbayes" || method == "nbayes-dense")
     predictor.reset(new NaiveBayes(deps, syms, sym_ths, sym_num, max_deps,
       method == "nbayes-dense"));

@@ -86,7 +86,7 @@ status=$?
 if [ $status -ne 0 ] || [ "$out" != "a " ]; then
   msg="rforest on a featureless one-theorem corpus: exit status $status, '$out'"
 fi
-for m in knn nbayes mepo rforest; do
+for m in knn nbayes mepo mepo-cosine rforest; do
   [ -n "$msg" ] && break
   out=$(run empty -p $m -n 4 -S <<<'')
   status=$?
@@ -157,7 +157,7 @@ msg=
 if [ "$out" != "b a " ]; then
   msg="knn gave '$out', not 'b a' (b is only reachable as a's dependency)"
 else
-  for m in knn nbayes mepo rforest; do
+  for m in knn nbayes mepo mepo-cosine rforest; do
     out=$(run future -p $m -n 2 -e "$WORK/future.eval")
     status=$?
     if [ $status -ne 0 ] || [[ $out != "c:"[ab]" "[ab]" " ]]; then
@@ -169,7 +169,7 @@ fi
 # a dependency at or after the evaluated theorem is not predicted for it
 corpus ahead $'a\nb\nc\n' $'a:"x"\nb:"y"\nc:"z"\n' $'a:c\n'
 printf 'b\n' > "$WORK/ahead.eval"
-for m in knn nbayes mepo rforest; do
+for m in knn nbayes mepo mepo-cosine rforest; do
   [ -n "$msg" ] && break
   out=$(run ahead -p $m -n 2 -e "$WORK/ahead.eval")
   status=$?
@@ -190,7 +190,7 @@ sed -e 's/^\(rev_append:\)\(.*\)$/\1\2, "c:rev", \2/' \
     -e 's/^\(length_def:"c:length", \)/\1"c:length", /' \
     "$DATA/lists.syms" > "$WORK/dup.syms"
 msg=
-for m in knn nbayes mepo; do
+for m in knn nbayes mepo mepo-cosine; do
   a=$(run dedup -p $m -n 16 -S < "$DATA/lists.queries")
   b=$(run dup -p $m -n 16 -S < "$DATA/lists.queries")
   c=$(sed 's/^\("[^"]*"\)\(.*\)$/\1\2, \1/' "$DATA/lists.queries" | run dedup -p $m -n 16 -S)
@@ -211,7 +211,7 @@ cp "$DATA/lists.deps" "$WORK/lists.deps"
 cp "$DATA/lists.syms" "$WORK/lists.syms"
 msg=
 plain='"c:rev", "c:map", "t:list"'
-for m in knn; do
+for m in knn mepo-cosine; do
   a=$(run lists -p $m -n 16 -S <<<"$plain")
   b=$(run lists -p $m -n 16 -S <<<'"c:rev"@0.01, "c:map"@3, "t:list"@0')
   if [ -z "$a" ] || [ "$a" != "$b" ]; then
@@ -368,7 +368,7 @@ LIMIT=5
 # golden rankings on the test corpus
 number=11
 msg=
-for m in knn nbayes mepo cosine; do
+for m in knn nbayes mepo mepo-cosine cosine; do
   out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
   if [ "$UPDATE" = --update-golden ]; then
     printf '%s\n' "$out" > "$GOLDEN/$m.out"
@@ -565,6 +565,37 @@ if [ "$out" != "a (1) b (0) c (0) " ]; then
   fail "mepo symbol names" "'$out'"
 else
   ok "mepo symbol names"
+fi
+
+# 20. mepo-cosine adds the symbols of each batch of 100 accepted theorems to
+# the query, weighted by their scores
+number=20
+# The query is k$q. p1 ... p99 have only k$q and score 1; m has k$q and k$w
+# and scores below 1 but above the rest, which score 0, so the first batch is
+# p1 ... p99, m. With 102 theorems, tfidf(k$q) = ln 102 - ln 100 = 0.0198026
+# and tfidf(k$w) = ln 102 - ln 2 = 3.931826; m scores
+# q^2 / (q^2 + w^2) = 2.536566e-05 with q, w those tfidfs, and k$w joins the
+# query with that weight c. Against the new query, z (k$w only) scores
+# w^2 c^2 / (q^2 + w^2 c^2) = 2.536437e-05 and takes the 101st place ahead of
+# n (k$n only), which still scores 0 and comes before z in <seq>. A single
+# pass ranks n first.
+corpus batch "$(repeat 99 'p#'; printf 'm\nn\nz\n')" \
+  "$(repeat 99 'p#:"k$q"'; printf '%s\n' 'm:"k$q", "k$w"' 'n:"k$n"' 'z:"k$w"')" ''
+out=$(run batch -p mepo-cosine -n 102 -S <<<'"k$q"')
+ids=$(ids_of <<<"$out")
+msg=
+[ "$ids" = "$(repeat 99 'p# ' | tr -d '\n')m z n " ] || msg="order: '$ids'"
+# the scores, times 1e5
+e5() { awk -v x="$1" 'BEGIN { if (x != "") printf "%.9f\n", x * 1e5 }'; }
+near "$(e5 "$(score_of m <<<"$out")")" 2.536566 || msg="m: '$out'"
+near "$(e5 "$(score_of z <<<"$out")")" 2.536437 || msg="z: '$out'"
+# a single pass, as cosine makes, ranks n before z
+cos=$(run batch -p cosine -n 102 <<<'"k$q"')
+[ "${cos% }" != "${cos%n z }" ] || msg="cosine: '$cos'"
+if [ -n "$msg" ]; then
+  fail "mepo-cosine batches" "$msg"
+else
+  ok "mepo-cosine batches"
 fi
 
 [ $failures -eq 0 ]

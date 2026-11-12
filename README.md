@@ -3,8 +3,8 @@
 `predict` is a premise selector for hammers: given the features of a goal, it
 ranks the theorems of a library by how likely they are to help prove it. It
 offers k-nearest neighbours (`knn`), naive Bayes (`nbayes`), TF-IDF cosine
-similarity (`cosine`), the Meng–Paulson relevance filter (`mepo`) and random
-forests (`rforest`).
+similarity (`cosine`), the Meng–Paulson relevance filter (`mepo`), an
+iterative TF-IDF cosine filter (`mepo-cosine`) and random forests (`rforest`).
 
 ## Building and testing
 
@@ -15,9 +15,9 @@ make test            # runs tests/run.sh against ./predict and against a
 ./predict --version
 ```
 
-`tests/golden/` holds the rankings of `knn`, `nbayes`, `mepo` and `cosine` on
-the test corpus in `tests/data/`; `make test` compares against them, and `make
-golden` rewrites them after an intended ranking change. The tests also check
+`tests/golden/` holds the rankings of `knn`, `nbayes`, `mepo`, `mepo-cosine`
+and `cosine` on the test corpus in `tests/data/`; `make test` compares against
+them, and `make golden` rewrites them after an intended ranking change. The tests also check
 that `nbayes` and `cosine` rank exactly as `nbayes-dense` and `cosine-dense`,
 which compute the same scores, up to rounding, by scanning every theorem, on
 the test corpus and on a synthetic corpus that `tests/gen.py` writes (the
@@ -28,7 +28,7 @@ build from a source archive still says what it is.
 ## Usage
 
 ```
-predict <syms> <deps> <seq> [-p knn|mepo|nbayes|cosine|rforest] [-n N] [-S] [-e <eval>] [-F <statures>]
+predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|rforest] [-n N] [-S] [-e <eval>] [-F <statures>]
 ```
 
 `predict` learns every theorem of `<seq>`, then reads one query per line on
@@ -167,12 +167,18 @@ symbol counts as order 1), the 1.5 multiplier on free variables, the lambda
 and theory pseudo-constants, the treatment of set constants, and the facts
 added after filtering (`ext`, set axioms).
 
+`mepo-cosine` is upstream's `mepo`. It ranks the theorems by TF-IDF cosine
+similarity to the query in batches of 100: after each batch, the symbols of
+its theorems join the query, each weighted by the highest score of a theorem
+in the batch that has it, and the remaining theorems are scored again.
+
 ## Differences from upstream
 
 - Option parsing works where `char` is unsigned (aarch64).
 - Every method learns the last theorem of `<seq>`.
 - Featureless theorems and empty queries are accepted, and give finite
-  scores in `knn`, `nbayes` and `mepo`; `rforest` accepts them too.
+  scores in `knn`, `nbayes`, `mepo` and `mepo-cosine`; `rforest` accepts them
+  too.
 - Features may contain `"`, `\` and newlines, and ids may contain `:`, as
   escaped above; `rforest`'s exported trees (`-x`, read back with `-y`) escape
   feature and theorem names the same way inside their quoted labels.
@@ -184,9 +190,8 @@ added after filtering (`ext`, set axioms).
   scan over every theorem does (kept as `nbayes-dense`), and learns from at
   most 20 dependencies per theorem by default (`-d`).
 - `cosine` is new.
-- `mepo` is Meng and Paulson's relevance filter, replacing upstream's
-  iterative TF-IDF cosine filter; `cosine` ranks by TF-IDF cosine.
-  `-F` gives it the theorems' statures.
+- `mepo` is Meng and Paulson's relevance filter; upstream's `mepo` is
+  `mepo-cosine`. `-F` gives `mepo` the theorems' statures.
 - `knn` sorts only as many neighbours as it needs.
 - `-S` prints scores; `--version` prints the version.
 
