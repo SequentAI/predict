@@ -2,7 +2,7 @@ CXX = g++
 CXXFLAGS = -O3 -std=c++17 -Wall
 
 SOURCES = main.cpp format.cpp predictor.cpp tfidf.cpp knn.cpp mepo.cpp \
-          mepo_cosine.cpp cosine.cpp nbayes.cpp rforest.cpp dtree.cpp
+          mepo_cosine.cpp cosine.cpp nbayes.cpp mesh.cpp rforest.cpp dtree.cpp
 
 predict: $(SOURCES)
 	$(CXX) $(CXXFLAGS) main.cpp -o $@

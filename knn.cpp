@@ -3,8 +3,9 @@
 
 class kNN : public Predictor {
   public:
+    // [credit_deps] makes the dependencies of each neighbour gain relevance
     kNN(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-      long sym_num);
+      long sym_num, bool credit_deps);
 
     void learn(long from, long to);
 
@@ -13,11 +14,13 @@ class kNN : public Predictor {
 
   private:
     Tfidf tfidf;
+    bool credit_deps;
 };
 
 kNN::kNN(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num)
-: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num) {
+  const LVecVec& sym_ths, long sym_num, bool credit_deps)
+: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num),
+  credit_deps(credit_deps) {
 }
 
 void kNN::learn(long from, long to) {
@@ -84,7 +87,7 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
     // dependencies of the neighbor also gain some relevance, depending on the
     // number of dependencies of the current theorem
     const LVec& ds = deps[nn];
-    if (ds.empty()) continue;
+    if (!credit_deps || ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
       if (d < maxth) { // in case of future dependencies, do not predict them

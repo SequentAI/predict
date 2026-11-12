@@ -4,7 +4,9 @@
 ranks the theorems of a library by how likely they are to help prove it. It
 offers k-nearest neighbours (`knn`), naive Bayes (`nbayes`), TF-IDF cosine
 similarity (`cosine`), the Meng–Paulson relevance filter (`mepo`), an
-iterative TF-IDF cosine filter (`mepo-cosine`) and random forests (`rforest`).
+iterative TF-IDF cosine filter (`mepo-cosine`), random forests (`rforest`), and
+two rank fusions: `mash`, of `knn` and `nbayes`, and `mesh`, of `mepo` and
+`mash`.
 
 ## Building and testing
 
@@ -15,8 +17,8 @@ make test            # runs tests/run.sh against ./predict and against a
 ./predict --version
 ```
 
-`tests/golden/` holds the rankings of `knn`, `nbayes`, `mepo`, `mepo-cosine`
-and `cosine` on the test corpus in `tests/data/`; `make test` compares against
+`tests/golden/` holds the rankings of `knn`, `nbayes`, `mepo`, `mepo-cosine`,
+`cosine`, `mash` and `mesh` (with their default options) on the test corpus in `tests/data/`; `make test` compares against
 them, and `make golden` rewrites them after an intended ranking change. The tests also check
 that `nbayes` and `cosine` rank exactly as `nbayes-dense` and `cosine-dense`,
 which compute the same scores, up to rounding, by scanning every theorem, on
@@ -28,7 +30,7 @@ build from a source archive still says what it is.
 ## Usage
 
 ```
-predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|rforest] [-n N] [-S] [-e <eval>] [-F <statures>]
+predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>]
 ```
 
 `predict` learns every theorem of `<seq>`, then reads one query per line on
@@ -172,13 +174,43 @@ similarity to the query in batches of 100: after each batch, the symbols of
 its theorems join the query, each weighted by the highest score of a theorem
 in the batch that has it, and the remaining theorems are scored again.
 
+`knn` lets each neighbour of the query credit its dependencies with part of
+its similarity. `-c 0` turns that off, in `knn` and inside `mash` and `mesh`;
+`-c 1`, the default, keeps it.
+
+`mash` and `mesh` fuse rankings as Isabelle's Sledgehammer does
+(`src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML`, lines 164–200 at commit
+`34ca456d44ca14641450b5d52f51b38688d4d1b5` of the GitHub mirror
+`isabelle-prover/mirror-isabelle`: `scaled_avg`, `normalize_scores`,
+`mesh_facts` and `steep_weight_of_fact`). For `M` predictions, each input
+ranking is cut to some length, and in it the theorem at rank `r` (from 0)
+weighs `0.62 ^ log2(r + 1)`, divided by the mean weight of the ranking's
+first `M` theorems. The candidates are the first `M` theorems of each input.
+A candidate scores the sum, over the inputs, of the input's weight times the
+candidate's weight in it (0 if the input does not have it). Equal scores are
+ranked in `<seq>` order. Isabelle also divides the sum by the number of
+inputs and rounds it to a multiple of 1e-8, which can only make nearly equal
+scores equal.
+
+- `mash` fuses `nbayes` and `knn`, weighted 0.5 each, each cut to `M`
+  theorems. Since both are cut alike, a theorem's score orders as the sum of
+  its two rank weights.
+- `mesh` fuses `mepo` and `mash`, weighted 0.5 each. `-T` sets how they are
+  cut: `-T 2M+25`, the default, cuts `mepo` to `M` theorems and `mash` to
+  `2M + 25`; `-T 51n/50` cuts both to `51n/50`, rounded down. Each input is
+  computed for as many predictions as its cut, so `mash` inside `mesh` fuses
+  `nbayes` and `knn` cut to that length.
+
+`M` and `n` are both the number of predictions asked for with `-n`
+(`no_adv` in `mesh.cpp`).
+
 ## Differences from upstream
 
 - Option parsing works where `char` is unsigned (aarch64).
 - Every method learns the last theorem of `<seq>`.
 - Featureless theorems and empty queries are accepted, and give finite
-  scores in `knn`, `nbayes`, `mepo` and `mepo-cosine`; `rforest` accepts them
-  too.
+  scores in `knn`, `nbayes`, `mepo`, `mepo-cosine`, `mash` and `mesh`;
+  `rforest` accepts them too.
 - Features may contain `"`, `\` and newlines, and ids may contain `:`, as
   escaped above; `rforest`'s exported trees (`-x`, read back with `-y`) escape
   feature and theorem names the same way inside their quoted labels.
@@ -189,7 +221,8 @@ in the batch that has it, and the remaining theorems are scored again.
 - `nbayes` reads only the statistics of the query's features, ranking as the
   scan over every theorem does (kept as `nbayes-dense`), and learns from at
   most 20 dependencies per theorem by default (`-d`).
-- `cosine` is new.
+- `cosine`, `mash` and `mesh` are new, and `-c` turns off `knn`'s credit to
+  the dependencies of neighbours.
 - `mepo` is Meng and Paulson's relevance filter; upstream's `mepo` is
   `mepo-cosine`. `-F` gives `mepo` the theorems' statures.
 - `knn` sorts only as many neighbours as it needs.
