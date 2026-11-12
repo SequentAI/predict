@@ -9,7 +9,7 @@
 #include "rforest.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.2.0";
+const string version_str = "0.3.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -31,6 +31,8 @@ const string usage_str =
   " Naive Bayes:\n"
   "  -d <n>       learn a theorem's features for only its first n dependencies\n"
   "               (default 20; 0 for all)\n"
+  " MePo:\n"
+  "  -F <file>    file giving the statures (simp, local) of theorems\n"
   " Random Forest:\n"
   "  -t <n>       number of trees to build\n"
   "  -s <n>       number of samples to consider per tree\n"
@@ -143,12 +145,15 @@ int main(int argc, char* argv[]) {
   // Naive Bayes specific options
   long max_deps = 20;
 
+  // MePo specific options
+  string staturesf;
+
   // print scores
   bool scores = false;
 
   int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "hd:e:n:p:k:St:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "hd:e:F:n:p:k:St:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
@@ -165,6 +170,9 @@ int main(int argc, char* argv[]) {
       }
       case 'e':
         evalf = optarg;
+        break;
+      case 'F':
+        staturesf = optarg;
         break;
       case 'n':
         predno = atoi_check(optarg, "number of predictions");
@@ -217,6 +225,10 @@ int main(int argc, char* argv[]) {
   read_deps(depsf, th_no, deps);
   read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym);
 
+  vector<unsigned char> statures(no_th.size(), 0);
+  if (!staturesf.empty())
+    read_statures(staturesf, th_no, statures);
+
   // getting number of a theorem
   //cout << th_no["Set.subsetI"] << endl;
 
@@ -225,7 +237,7 @@ int main(int argc, char* argv[]) {
   if (method == "knn")
     predictor.reset(new kNN(deps, syms, sym_ths, sym_num));
   else if (method == "mepo")
-    predictor.reset(new MePo(deps, syms, sym_ths, sym_num));
+    predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures));
   else if (method == "nbayes" || method == "nbayes-dense")
     predictor.reset(new NaiveBayes(deps, syms, sym_ths, sym_num, max_deps,
       method == "nbayes-dense"));

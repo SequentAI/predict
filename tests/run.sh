@@ -211,7 +211,7 @@ cp "$DATA/lists.deps" "$WORK/lists.deps"
 cp "$DATA/lists.syms" "$WORK/lists.syms"
 msg=
 plain='"c:rev", "c:map", "t:list"'
-for m in knn mepo; do
+for m in knn; do
   a=$(run lists -p $m -n 16 -S <<<"$plain")
   b=$(run lists -p $m -n 16 -S <<<'"c:rev"@0.01, "c:map"@3, "t:list"@0')
   if [ -z "$a" ] || [ "$a" != "$b" ]; then
@@ -365,8 +365,193 @@ for m in nbayes cosine; do
 done
 LIMIT=5
 
+# MePo. Below, freq is the number of theorems containing a symbol, a relevant
+# symbol weighs rel(f) = 1 + 2 / ln(f + 1), an irrelevant one
+# irrel(f) = ln(f + 1) / ln 100 below frequency 100 and rel(f) / rel(100)
+# from 100 on, and a theorem scores R / (R + I) with R and I the sums of
+# those weights.
+
+# score_of <id>: reads `-S` output and prints the score of theorem <id>
+score_of() { scores_of | awk -v id="$1" '$1 == id { print $2 }'; }
+
+# near <a> <b>: succeeds if the numbers a and b differ by at most 1e-6
+near() { awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; exit !(a != "" && d <= 1e-6 && d >= -1e-6) }'; }
+
+# ids_of: reads `-S` output and prints the ids, separated by spaces
+ids_of() { scores_of | awk '{ printf "%s ", $1 }'; }
+
+# repeat <n> <line>: prints <line> with `#` replaced by 1 ... n, one per line
+repeat() { for i in $(seq 1 "$1"); do printf '%s\n' "${2//\#/$i}"; done; }
+
+# 12. a theorem's score
+# For the query k$q: a has k$q (freq 1, rel(1) = 1 + 2 / ln 2 = 3.885390)
+# and k$u (freq 1, irrel(1) = ln 2 / ln 100 = 0.150515), and scores
+# 3.885390 / (3.885390 + 0.150515) = 0.962706; d has no relevant symbol and
+# scores 0. For the query k$r, k$s: b has k$r (freq 3, rel(3) = 1 + 2 / ln 4
+# = 2.442695) and k$v (freq 2, irrel(2) = ln 3 / ln 100 = 0.238561), and
+# scores 2.442695 / 2.681256 = 0.911027; c has only relevant symbols and
+# scores 1.
+number=12
+corpus score $'a\nb\nc\nd\ne\n' \
+  $'a:"k$q", "k$u"\nb:"k$r", "k$v"\nc:"k$r", "k$s"\nd:"k$v"\ne:"k$r", "k$s"\n' ''
+msg=
+out=$(run score -p mepo -n 5 -S <<<'"k$q"')
+near "$(score_of a <<<"$out")" 0.962706 || msg="a: '$out'"
+near "$(score_of d <<<"$out")" 0 || msg="d: '$out'"
+out=$(run score -p mepo -n 4 -S <<<'"k$r", "k$s"')
+if [ -z "$msg" ]; then
+  near "$(score_of b <<<"$out")" 0.911027 || msg="b: '$out'"
+  near "$(score_of c <<<"$out")" 1 || msg="c: '$out'"
+fi
+if [ -n "$msg" ]; then fail "mepo score" "$msg"; else ok "mepo score"; fi
+
+# 13. the weight of an irrelevant symbol peaks at frequency 100
+number=13
+# a has the query's symbol k$q (freq 1, rel(1) = 3.885390) and k$u, which
+# n - 1 other theorems also have. irrel(n) for n = 1, 10, 99, 100, 101 and
+# 400 is ln 2 / ln 100 = 0.150515, ln 11 / ln 100 = 0.520696, ln 100 / ln 100
+# = 1, rel(100) / rel(100) = 1, rel(101) / rel(100) = 1.433119 / 1.433370 =
+# 0.999356 and rel(400) / rel(100) = 1.333735 / 1.433370 = 0.930451, so a
+# scores 3.885390 / (3.885390 + irrel(n)): 0.962706, 0.881823, 0.795308,
+# 0.795308, 0.795413 and 0.806794.
+msg=
+for nw in 1:0.962706 10:0.881823 99:0.795308 100:0.795308 101:0.795413 400:0.806794; do
+  n=${nw%:*}
+  corpus u "$(printf 'a\n'; repeat $((n - 1)) 'f#')"$'\n' \
+    "$(printf 'a:"k$q", "k$u"\n'; repeat $((n - 1)) 'f#:"k$u"')"$'\n' ''
+  out=$(run u -p mepo -n 1 -S <<<'"k$q"')
+  near "$(score_of a <<<"$out")" "${nw#*:}" || { msg="freq $n: '$out'"; break; }
+done
+if [ -n "$msg" ]; then fail "mepo irrelevant weight" "$msg"; else ok "mepo irrelevant weight"; fi
+
+# 14. symbols only in the goal's assumptions (weight below 1)
+number=14
+# a has k$c (freq 1, rel(1) = 3.885390) and k$h (freq 1). With k$h only in
+# the assumptions, it is not relevant and weighs 0.25 irrel(1) = 0.25 *
+# 0.150515 = 0.037629: a scores 3.885390 / 3.923019 = 0.990408. Outside the
+# query k$h weighs irrel(1): 0.962706. In the conclusion too, it is relevant:
+# 1. With only assumptions, their symbols are the relevant ones, and k$c
+# weighs irrel(1): 0.962706.
+corpus asm $'a\n' $'a:"k$c", "k$h"\n' ''
+msg=
+for qw in '"k$c", "k$h"@0.5:0.990408' '"k$c":0.962706' \
+          '"k$c", "k$h"@0.5, "k$h":1' '"k$h"@0.5:0.962706'; do
+  out=$(run asm -p mepo -n 1 -S <<<"${qw%:*}")
+  near "$(score_of a <<<"$out")" "${qw##*:}" || { msg="query ${qw%:*}: '$out'"; break; }
+done
+if [ -n "$msg" ]; then fail "mepo assumption symbols" "$msg"; else ok "mepo assumption symbols"; fi
+
+# 15. stature bonuses
+number=15
+# a, b, c and d have k$g and k$u (freq 4 each): R = rel(4) = 1 + 2 / ln 5 =
+# 2.242670 and I = irrel(4) = ln 5 / ln 100 = 0.349485. a has no flag:
+# 2.242670 / 2.592155 = 0.865176. b is a simp rule, I - 0.15 = 0.199485:
+# 2.242670 / 2.442155 = 0.918316. c is local, I - 0.55 = -0.200515:
+# 2.242670 / 2.042155 = 1.098188. d is both, and the simp bonus wins:
+# 0.918316. All are accepted at once, by score.
+corpus stat $'a\nb\nc\nd\n' "$(repeat 4 'x#:"k$g", "k$u"' | sed 's/^x1/a/; s/^x2/b/; s/^x3/c/; s/^x4/d/')"$'\n' ''
+printf 'b:simp\nc:local\nd:local simp\n' > "$WORK/stat.statures"
+msg=
+out=$(run stat -p mepo -n 4 -S -F "$WORK/stat.statures" <<<'"k$g"')
+for iw in a:0.865176 b:0.918316 c:1.098188 d:0.918316; do
+  near "$(score_of ${iw%:*} <<<"$out")" ${iw#*:} || { msg="'$out'"; break; }
+done
+if [ -z "$msg" ] && [ "$(ids_of <<<"$out")" != "c b d a " ]; then
+  msg="order '$out'"
+fi
+if [ -z "$msg" ]; then
+  out=$(run stat -p mepo -n 4 -S <<<'"k$g"')
+  for i in a b c d; do
+    near "$(score_of $i <<<"$out")" 0.865176 || { msg="without -F: '$out'"; break; }
+  done
+fi
+if [ -n "$msg" ]; then fail "mepo statures" "$msg"; else ok "mepo statures"; fi
+
+# 16. at most ceil(11.5 ^ (remaining / max_facts)) imperfect facts per
+# iteration
+number=16
+# p1 ... p20 have k$g and k$v (freq 20 each): R = rel(20) = 1 + 2 / ln 21 =
+# 1.656917, I = irrel(20) = ln 21 / ln 100 = 0.661110, score 0.714796. With
+# -n 20, the first iteration accepts ceil(11.5 ^ (20 / 20)) = 12 of them, in
+# <seq> order; k$v becomes relevant, so p13 ... p20 score 1 (perfect) and
+# are accepted next.
+corpus cap "$(repeat 20 'p#')"$'\n' "$(repeat 20 'p#:"k$g", "k$v"')"$'\n' ''
+want="$(repeat 20 'p#' | tr '\n' ' ')"
+msg=
+out=$(run cap -p mepo -n 20 -S <<<'"k$g"')
+if [ "$(ids_of <<<"$out")" != "$want" ]; then
+  msg="order '$out'"
+else
+  for i in 1 12; do near "$(score_of p$i <<<"$out")" 0.714796 || msg="p$i: '$out'"; done
+  for i in 13 20; do near "$(score_of p$i <<<"$out")" 1 || msg="p$i: '$out'"; done
+fi
+if [ -n "$msg" ]; then fail "mepo imperfect cap" "$msg"; else ok "mepo imperfect cap"; fi
+
+# 17. The ranking follows the order of acceptance, then the score; this
+# also checks the cap with fewer facts remaining. Three iterations, with -n 20:
+# the query is k$g. Iteration 0: p1 ... p8 have only k$g (score 1); b has
+# k$g (freq 9, rel(9) = 1 + 2 / ln 10 = 1.868589) and k$h (freq 13,
+# irrel(13) = ln 14 / ln 100 = 0.573064), scoring 1.868589 / 2.441653 =
+# 0.765297. All nine pass the threshold 0.45 and are accepted, by score: p1 ...
+# p8, b. The threshold decays by d = (0.15 / 0.55) ^ (1 / 21) = 0.939983 per
+# accepted fact, to 1 - 0.55 d^9 = 0.684839. Iteration 1: k$h is relevant,
+# so q1 ... q12, with k$h (rel(13) = 1 + 2 / ln 14 = 1.757846) and k$z (freq
+# 12, irrel(12) = ln 13 / ln 100 = 0.556972), score 1.757846 / 2.314818 =
+# 0.759389 >= 0.684839; with 11 of 20 remaining, ceil(11.5 ^ (11 / 20)) =
+# ceil(3.832) = 4 of them are accepted, q1 ... q4. Iteration 2: k$z is
+# relevant, q5 ... q12 score 1, and the 7 remaining slots take q5 ... q11.
+number=17
+corpus iters "$(printf 'b\n'; repeat 8 'p#'; repeat 12 'q#')"$'\n' \
+  "$(printf 'b:"k$g", "k$h"\n'; repeat 8 'p#:"k$g"'; repeat 12 'q#:"k$h", "k$z"')"$'\n' ''
+want="$(repeat 8 'p#' | tr '\n' ' ')b $(repeat 11 'q#' | tr '\n' ' ')"
+msg=
+out=$(run iters -p mepo -n 20 -S <<<'"k$g"')
+if [ "$(ids_of <<<"$out")" != "$want" ]; then
+  msg="order '$out'"
+else
+  for iw in p1:1 b:0.765297 q1:0.759389 q4:0.759389 q5:1 q11:1; do
+    near "$(score_of ${iw%:*} <<<"$out")" ${iw#*:} || { msg="${iw%:*}: '$out'"; break; }
+  done
+fi
+if [ -n "$msg" ]; then fail "mepo acceptance order" "$msg"; else ok "mepo acceptance order"; fi
+
+# 18. the threshold decays with every accepted fact
+number=18
+# With -n 4, d = (0.15 / 0.55) ^ (1 / 5) = 0.771162. Iteration 0 accepts p
+# (k$g only, score 1) and b (k$g, freq 2, rel(2) = 1 + 2 / ln 3 = 2.820478;
+# k$h, freq 3, irrel(3) = ln 4 / ln 100 = 0.301030: 0.903563). The threshold
+# becomes 1 - 0.55 d^2 = 0.672920. Iteration 1: k$h is relevant (rel(3) =
+# 2.442695). x has k$h, k$c (freq 100, irrel 1) and k$x (freq 2, irrel(2) =
+# 0.238561): 2.442695 / 3.681256 = 0.663549 < 0.672920, rejected though it
+# passes 0.45. z has k$h, k$e (freq 100, irrel 1) and k$z (freq 1, irrel(1) =
+# 0.150515): 2.442695 / 3.593210 = 0.679809, accepted. Iteration 2 makes k$e
+# relevant, and e1 (k$e only) takes the last slot.
+corpus decay "$(printf 'p\nb\nx\nz\n'; repeat 99 'c#'; repeat 99 'e#')"$'\n' \
+  "$(printf 'p:"k$g"\nb:"k$g", "k$h"\nx:"k$h", "k$c", "k$x"\nz:"k$h", "k$e", "k$z"\n'
+     repeat 98 'c#:"k$c"'; printf 'c99:"k$c", "k$x"\n'; repeat 99 'e#:"k$e"')"$'\n' ''
+msg=
+out4=$(run decay -p mepo -n 4 -S <<<'"k$g"')
+if [ "$(ids_of <<<"$out4")" != "p b z e1 " ]; then
+  msg="order '$out4'"
+else
+  for iw in p:1 b:0.903563 z:0.679809; do
+    near "$(score_of ${iw%:*} <<<"$out4")" ${iw#*:} || { msg="${iw%:*}: '$out4'"; break; }
+  done
+fi
+if [ -n "$msg" ]; then fail "mepo threshold decay" "$msg"; else ok "mepo threshold decay"; fi
+
+# 19. symbols are matched by their whole name
+number=19
+corpus names $'a\nb\nc\n' $'a:"list$LENGTH"\nb:"rich_list$LENGTH"\nc:"LENGTH"\n' ''
+out=$(run names -p mepo -n 3 -S <<<'"list$LENGTH"')
+if [ "$out" != "a (1) b (0) c (0) " ]; then
+  fail "mepo symbol names" "'$out'"
+else
+  ok "mepo symbol names"
+fi
+
 # golden rankings on the test corpus
-number=11
+number=20
 msg=
 for m in knn nbayes mepo cosine; do
   out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
