@@ -86,7 +86,7 @@ status=$?
 if [ $status -ne 0 ] || [ "$out" != "a " ]; then
   msg="rforest on a featureless one-theorem corpus: exit status $status, '$out'"
 fi
-for m in knn nbayes mepo mepo-cosine rforest; do
+for m in knn nbayes mepo mepo-cosine mash mesh rforest; do
   [ -n "$msg" ] && break
   out=$(run empty -p $m -n 4 -S <<<'')
   status=$?
@@ -157,7 +157,7 @@ msg=
 if [ "$out" != "b a " ]; then
   msg="knn gave '$out', not 'b a' (b is only reachable as a's dependency)"
 else
-  for m in knn nbayes mepo mepo-cosine rforest; do
+  for m in knn nbayes mepo mepo-cosine mash mesh rforest; do
     out=$(run future -p $m -n 2 -e "$WORK/future.eval")
     status=$?
     if [ $status -ne 0 ] || [[ $out != "c:"[ab]" "[ab]" " ]]; then
@@ -169,7 +169,7 @@ fi
 # a dependency at or after the evaluated theorem is not predicted for it
 corpus ahead $'a\nb\nc\n' $'a:"x"\nb:"y"\nc:"z"\n' $'a:c\n'
 printf 'b\n' > "$WORK/ahead.eval"
-for m in knn nbayes mepo mepo-cosine rforest; do
+for m in knn nbayes mepo mepo-cosine mash mesh rforest; do
   [ -n "$msg" ] && break
   out=$(run ahead -p $m -n 2 -e "$WORK/ahead.eval")
   status=$?
@@ -190,7 +190,7 @@ sed -e 's/^\(rev_append:\)\(.*\)$/\1\2, "c:rev", \2/' \
     -e 's/^\(length_def:"c:length", \)/\1"c:length", /' \
     "$DATA/lists.syms" > "$WORK/dup.syms"
 msg=
-for m in knn nbayes mepo mepo-cosine; do
+for m in knn nbayes mepo mepo-cosine mash mesh; do
   a=$(run dedup -p $m -n 16 -S < "$DATA/lists.queries")
   b=$(run dup -p $m -n 16 -S < "$DATA/lists.queries")
   c=$(sed 's/^\("[^"]*"\)\(.*\)$/\1\2, \1/' "$DATA/lists.queries" | run dedup -p $m -n 16 -S)
@@ -368,7 +368,7 @@ LIMIT=5
 # golden rankings on the test corpus
 number=11
 msg=
-for m in knn nbayes mepo mepo-cosine cosine; do
+for m in knn nbayes mepo mepo-cosine cosine mash mesh; do
   out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
   if [ "$UPDATE" = --update-golden ]; then
     printf '%s\n' "$out" > "$GOLDEN/$m.out"
@@ -597,5 +597,147 @@ if [ -n "$msg" ]; then
 else
   ok "mepo-cosine batches"
 fi
+
+# MaSh and MeSh. A theorem at rank r (from 0) of an input ranking weighs
+# s(r) = 0.62 ^ log2(r + 1): s(0) = 1, s(1) = 0.62, s(2) = 0.468906,
+# s(3) = 0.3844, s(4) = 0.329720, s(5) = 0.290721. The fused ranking orders
+# theorems by the sum of their weights, each leg's weights scaled alike.
+
+# features <from> <to>: prints `, "e<from>", ..., "e<to>"`
+features() { for i in $(seq "$1" "$2"); do printf ', "e%s"' "$i"; done; }
+
+# rank_of <id>: reads predictions and prints the rank (from 0) of <id>
+rank_of() { tr ' ' '\n' | grep -v '^$' | grep -n -x -F "$1" | cut -d: -f1 | awk '{ print $1 - 1 }'; }
+
+# a and b share both query features but have many others, which naive Bayes
+# penalises and knn ignores
+corpus fuse $'a\nb\nc\nd\ne\nf\n' \
+  "a:\"x\", \"y\"$(features 1 10)
+b:\"x\", \"y\"$(features 20 30)
+c:\"x\", \"e40\"
+d:\"x\"
+e:\"z\"
+f:\"w\"
+" ''
+
+# 21. mash sums the steep weights of knn's and naive Bayes's rankings
+number=21
+# For the query x, y with -n 4, knn ranks a b c d and naive Bayes d c a b, so
+# a scores s(0) + s(2) = 1.468906, b s(1) + s(3) = 1.0044, c s(2) + s(1) =
+# 1.088906 and d s(3) + s(0) = 1.3844: a d c b.
+msg=
+knn=$(run fuse -p knn -n 4 <<<'"x", "y"')
+nb=$(run fuse -p nbayes -n 4 <<<'"x", "y"')
+out=$(run fuse -p mash -n 4 <<<'"x", "y"')
+if [ "$knn" != "a b c d " ] || [ "$nb" != "d c a b " ]; then
+  msg="the inputs are knn '$knn' and nbayes '$nb', not 'a b c d' and 'd c a b'"
+elif [ "$out" != "a d c b " ]; then
+  msg="'$out', not 'a d c b'"
+fi
+if [ -n "$msg" ]; then fail "mash fusion" "$msg"; else ok "mash fusion"; fi
+
+# 22. -c turns off the credit knn gives the dependencies of neighbours
+number=22
+# a depends on f. With credit (-c 1, the default), knn ranks f a b c and
+# naive Bayes f d c a: f scores s(0) + s(0) = 2, a s(1) + s(3) = 1.0044,
+# b s(2) = 0.468906, c s(3) + s(2) = 0.853306 and d s(1) = 0.62: f a c d.
+# Without it (-c 0), knn ranks a b c d: a scores s(0) + s(3) = 1.3844, b
+# s(1) = 0.62, c s(2) + s(2) = 0.937812, d s(3) + s(1) = 1.0044 and f s(0)
+# = 1: a d f c.
+cp "$WORK/fuse.seq" "$WORK/credit.seq"
+cp "$WORK/fuse.syms" "$WORK/credit.syms"
+printf 'a:f\n' > "$WORK/credit.deps"
+msg=
+for cw in "-c 1:f a b c :f d c a :f a c d " ":f a b c :f d c a :f a c d " \
+          "-c 0:a b c d :f d c a :a d f c "; do
+  IFS=: read -r opt wknn wnb want <<<"$cw"
+  knn=$(run credit -p knn -n 4 $opt <<<'"x", "y"')
+  nb=$(run credit -p nbayes -n 4 $opt <<<'"x", "y"')
+  out=$(run credit -p mash -n 4 $opt <<<'"x", "y"')
+  if [ "$knn" != "$wknn" ] || [ "$nb" != "$wnb" ] || [ "$out" != "$want" ]; then
+    msg="${opt:-without -c}: knn '$knn', nbayes '$nb', mash '$out'"
+    break
+  fi
+done
+if [ -z "$msg" ] && run credit -p mash -c 2 <<<'"x"' >/dev/null; then
+  msg="-c 2 is accepted"
+fi
+if [ -n "$msg" ]; then fail "mash dependency credit" "$msg"; else ok "mash dependency credit"; fi
+
+# MeSh fixtures: g and h join the corpus above
+cp "$WORK/fuse.seq" "$WORK/mesh.seq"
+printf 'g\nh\n' >> "$WORK/mesh.seq"
+cp "$WORK/fuse.syms" "$WORK/mesh.syms"
+printf '%s\n' 'g:"y", "z"' 'h:"y"' >> "$WORK/mesh.syms"
+: > "$WORK/mesh.deps"
+# p1 ... p48 have only x; w has x and u, z x and v, q1 ... q12 x and v, and
+# r1 ... r20 only y
+corpus long "$(repeat 48 'p#'; printf 'w\nz\n'; repeat 12 'q#'; repeat 20 'r#')"$'\n' \
+  "$(repeat 48 'p#:"x"'; printf '%s\n' 'w:"x", "u"' 'z:"x", "v"'
+     repeat 12 'q#:"x", "v"'; repeat 20 'r#:"y"')"$'\n' ''
+
+# 23. mesh with MePo cut to M and MaSh to 2M + 25 (the default)
+number=23
+# For the query x, y with -n 4 (M = 4), mepo -n 4 ranks d h c g and mash,
+# cut to 2M + 25 = 33 or the 8 theorems there are, d a h b c g e f. The
+# candidates are the first 4 of each; d scores s(0) + s(0) = 2, h s(1) +
+# s(2) = 1.088906, c s(2) + s(4) = 0.798626, g s(3) + s(5) = 0.675121, a
+# s(1) = 0.62 and b s(3) = 0.3844: d h c g.
+# On the long corpus with -n 50, mepo -n 50 ranks w 48th and mash -n 80
+# (2M + 25 = 125 cut to 80 theorems) ranks w 54th, so w scores
+# 0.5 (s(48) + s(54)) / m = 0.399700, where m = 0.164305 is the mean of
+# s(0) ... s(49).
+msg=
+mepo=$(run mesh -p mepo -n 4 <<<'"x", "y"')
+mash=$(run mesh -p mash -n 8 <<<'"x", "y"')
+if [ "$mepo" != "d h c g " ] || [ "$mash" != "d a h b c g e f " ]; then
+  msg="the inputs are mepo '$mepo' and mash '$mash', not 'd h c g' and 'd a h b c g e f'"
+fi
+for opt in "" "-T 2M+25"; do
+  [ -n "$msg" ] && break
+  out=$(run mesh -p mesh -n 4 $opt <<<'"x", "y"')
+  [ "$out" = "d h c g " ] || msg="${opt:-without -T}: '$out', not 'd h c g'"
+done
+if [ -z "$msg" ]; then
+  mepo=$(run long -p mepo -n 50 <<<'"x"' | rank_of w)
+  mash=$(run long -p mash -n 80 <<<'"x"' | rank_of w)
+  out=$(run long -p mesh -n 50 -S <<<'"x"')
+  if [ "$mepo" != 48 ] || [ "$mash" != 54 ]; then
+    msg="w ranks $mepo in mepo and $mash in mash, not 48 and 54"
+  else
+    near "$(score_of w <<<"$out")" 0.399700 || msg="w: '$out'"
+  fi
+fi
+if [ -n "$msg" ]; then fail "mesh cut 2M+25" "$msg"; else ok "mesh cut 2M+25"; fi
+
+# 24. mesh with both inputs cut to 51n/50
+number=24
+# With -n 4, 51n/50 = 4: mepo -n 4 ranks d h c g and mash -n 4 d a c b. d
+# scores s(0) + s(0) = 2, c s(2) + s(2) = 0.937812, a s(1) = 0.62, h s(1) =
+# 0.62, g s(3) = 0.3844 and b s(3) = 0.3844: d c a h, a before h in <seq>.
+# On the long corpus with -n 50, 51n/50 = 51: mepo -n 51 ranks w 48th and
+# mash -n 51 ranks it 50th, the 51st theorem, which counts: w scores
+# 0.5 (s(48) + s(50)) / m = 0.409957 (0.207812 without it).
+msg=
+mash=$(run mesh -p mash -n 4 <<<'"x", "y"')
+out=$(run mesh -p mesh -n 4 -T 51n/50 <<<'"x", "y"')
+if [ "$mash" != "d a c b " ]; then
+  msg="the input is mash '$mash', not 'd a c b'"
+elif [ "$out" != "d c a h " ]; then
+  msg="'$out', not 'd c a h'"
+else
+  mepo=$(run long -p mepo -n 51 <<<'"x"' | rank_of w)
+  mash=$(run long -p mash -n 51 <<<'"x"' | rank_of w)
+  out=$(run long -p mesh -n 50 -S -T 51n/50 <<<'"x"')
+  if [ "$mepo" != 48 ] || [ "$mash" != 50 ]; then
+    msg="w ranks $mepo in mepo and $mash in mash, not 48 and 50"
+  else
+    near "$(score_of w <<<"$out")" 0.409957 || msg="w: '$out'"
+  fi
+fi
+if [ -z "$msg" ] && run mesh -p mesh -T 51n <<<'"x"' >/dev/null; then
+  msg="-T 51n is accepted"
+fi
+if [ -n "$msg" ]; then fail "mesh cut 51n/50" "$msg"; else ok "mesh cut 51n/50"; fi
 
 [ $failures -eq 0 ]

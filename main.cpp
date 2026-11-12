@@ -3,14 +3,12 @@
 #include <memory>
 
 #include "cosine.cpp"
-#include "knn.cpp"
-#include "mepo.cpp"
 #include "mepo_cosine.cpp"
-#include "nbayes.cpp"
+#include "mesh.cpp"
 #include "rforest.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.3.0";
+const string version_str = "0.4.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -21,7 +19,8 @@ const string usage_str =
   "  <seq>  is a file containing the order of theorems\n"
   "\n"
   "General options:\n"
-  "  -p <method>  method is either knn, mepo, mepo-cosine, nbayes, cosine, or rforest\n"
+  "  -p <method>  method is either knn, mepo, mepo-cosine, nbayes, cosine, mash,\n"
+  "               mesh, or rforest\n"
   "  -n <i>       i is the number of predictions to output\n"
   "  -e <eval>    eval is an optional file, containing theorems for which we want predictions\n"
   "  -S           print each prediction's score after it, in parentheses\n"
@@ -29,11 +28,17 @@ const string usage_str =
   "  -y <path>    Ymport learned predictor data from path\n"
   "\n"
   "Predictor-specific options:\n"
-  " Naive Bayes:\n"
+  " k-NN (also in MaSh and MeSh):\n"
+  "  -c <0|1>     1 credits the dependencies of neighbours, 0 does not (default 1)\n"
+  " Naive Bayes (also in MaSh and MeSh):\n"
   "  -d <n>       learn a theorem's features for only its first n dependencies\n"
   "               (default 20; 0 for all)\n"
-  " MePo:\n"
+  " MePo (also in MeSh):\n"
   "  -F <file>    file giving the statures (simp, local) of theorems\n"
+  " MeSh:\n"
+  "  -T <cut>     how MeSh cuts its inputs for M predictions: 2M+25 (default)\n"
+  "               cuts MePo to M and MaSh to 2M+25 theorems, 51n/50 cuts both\n"
+  "               to 51M/50\n"
   " Random Forest:\n"
   "  -t <n>       number of trees to build\n"
   "  -s <n>       number of samples to consider per tree\n"
@@ -149,16 +154,36 @@ int main(int argc, char* argv[]) {
   // MePo specific options
   string staturesf;
 
+  // k-NN specific options
+  bool credit_deps = true;
+
+  // MeSh specific options
+  bool over = false;
+
   // print scores
   bool scores = false;
 
   int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "hd:e:F:n:p:k:St:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "hc:d:e:F:n:p:k:St:T:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
         return EXIT_SUCCESS;
+      case 'c':
+        if (string(optarg) != "0" && string(optarg) != "1") {
+          cerr << "Error: -c takes 0 or 1, not '" << optarg << "'!\n";
+          return EXIT_FAILURE;
+        }
+        credit_deps = string(optarg) == "1";
+        break;
+      case 'T':
+        if (string(optarg) != "2M+25" && string(optarg) != "51n/50") {
+          cerr << "Error: -T takes 2M+25 or 51n/50, not '" << optarg << "'!\n";
+          return EXIT_FAILURE;
+        }
+        over = string(optarg) == "51n/50";
+        break;
       case 'd': {
         char *rest;
         errno = 0;
@@ -236,7 +261,7 @@ int main(int argc, char* argv[]) {
   // initialise predictor
   unique_ptr<Predictor> predictor;
   if (method == "knn")
-    predictor.reset(new kNN(deps, syms, sym_ths, sym_num));
+    predictor.reset(new kNN(deps, syms, sym_ths, sym_num, credit_deps));
   else if (method == "mepo")
     predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures));
   else if (method == "mepo-cosine")
@@ -247,6 +272,12 @@ int main(int argc, char* argv[]) {
   else if (method == "cosine" || method == "cosine-dense")
     predictor.reset(new Cosine(deps, syms, sym_ths, sym_num,
       method == "cosine-dense"));
+  else if (method == "mash")
+    predictor.reset(new MaSh(deps, syms, sym_ths, sym_num, max_deps,
+      credit_deps));
+  else if (method == "mesh")
+    predictor.reset(new MeSh(deps, syms, sym_ths, sym_num, statures, max_deps,
+      credit_deps, over));
   else if (method == "rforest")
     predictor.reset(new RandomForest(deps, syms, sym_ths, sym_num,
       n_trees, n_samples, n_features, depweight));
