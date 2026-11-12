@@ -365,6 +365,23 @@ for m in nbayes cosine; do
 done
 LIMIT=5
 
+# golden rankings on the test corpus
+number=11
+msg=
+for m in knn nbayes mepo cosine; do
+  out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
+  if [ "$UPDATE" = --update-golden ]; then
+    printf '%s\n' "$out" > "$GOLDEN/$m.out"
+  elif [ "$out" != "$(cat "$GOLDEN/$m.out")" ]; then
+    msg="$msg $m"
+  fi
+done
+if [ -n "$msg" ]; then
+  fail "golden rankings" "differ for$msg"
+else
+  ok "golden rankings"
+fi
+
 # MePo. Below, freq is the number of theorems containing a symbol, a relevant
 # symbol weighs rel(f) = 1 + 2 / ln(f + 1), an irrelevant one
 # irrel(f) = ln(f + 1) / ln 100 below frequency 100 and rel(f) / rel(100)
@@ -548,23 +565,6 @@ if [ "$out" != "a (1) b (0) c (0) " ]; then
   fail "mepo symbol names" "'$out'"
 else
   ok "mepo symbol names"
-fi
-
-# golden rankings on the test corpus
-number=20
-msg=
-for m in knn nbayes mepo cosine; do
-  out=$(run lists -p $m -n 10 < "$DATA/lists.queries")
-  if [ "$UPDATE" = --update-golden ]; then
-    printf '%s\n' "$out" > "$GOLDEN/$m.out"
-  elif [ "$out" != "$(cat "$GOLDEN/$m.out")" ]; then
-    msg="$msg $m"
-  fi
-done
-if [ -n "$msg" ]; then
-  fail "golden rankings" "differ for$msg"
-else
-  ok "golden rankings"
 fi
 
 [ $failures -eq 0 ]
