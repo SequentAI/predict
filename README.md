@@ -86,12 +86,14 @@ number:
 A feature without a weight weighs 1.0. `nbayes` scales each query feature's
 contribution to a score by its weight, `cosine` uses the weight as the
 feature's term frequency, and `mepo` reads a weight below 1 as marking a
-symbol that occurs only in the goal's assumptions; the other methods ignore
+symbol that occurs only in the goal's assumptions; `mash` passes the weights
+to its `nbayes`, and `mesh` to its `mepo` and `mash`. The other methods ignore
 weights.
 Features no theorem has are ignored, a repeated feature counts once with its
 largest weight, and an empty line is a query with no features.
 
-`<statures>`, given with `-F` and read only by `mepo`, flags theorems:
+`<statures>`, given with `-F` and read only by `mepo` (also inside `mesh`),
+flags theorems:
 
 ```
 id:flag1 flag2 ...
