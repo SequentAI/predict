@@ -237,11 +237,12 @@ double MePo::typed_rel_weight(const TypedSym& s, long freq) const {
     (1.0 + 2.0 / log((double)freq + 1.0));
 }
 
-// x ^ n as sledgehammer_mepo.ML's pow_int computes it
+// x ^ n as sledgehammer_mepo.ML's pow_int computes it, without its recursion
 static double pow_int(double x, long n) {
-  if (n == 0) return 1.0;
-  if (n > 0) return x * pow_int(x, n - 1);
-  return pow_int(x, n + 1) / x;
+  double r = 1.0;
+  for (; n > 0; --n) r *= x;
+  for (; n < 0; ++n) r /= x;
+  return r;
 }
 
 // sledgehammer_mepo.ML's irrel_pconst_weight: [freq] counts the occurrences
