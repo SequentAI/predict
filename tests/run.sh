@@ -740,4 +740,117 @@ if [ -z "$msg" ] && run mesh -p mesh -T 51n <<<'"x"' >/dev/null; then
 fi
 if [ -n "$msg" ]; then fail "mesh cut 51n/50" "$msg"; else ok "mesh cut 51n/50"; fi
 
+# 25. typed symbols: a fact's symbol whose type patterns generalize the
+# goal's is relevant
+number=25
+# Each case has its own symbols, each in one fact (freq 1): rel(1) = 3.885390,
+# irrel(1) = 0.150515. The goal has k$f at type k$num; a has k$f at any type
+# (`_`), which generalizes it, and k$u. a's k$f also generalizes b's, so its
+# freq is 2, rel(2) = 2.820478: 2.820478 / (2.820478 + 0.150515) = 0.949338.
+# Untyped, k$f matches by name alike, but a fact with k$f at k$bool would be
+# relevant too: typed, b is not, and scores 0.
+corpus types $'a\nb\nc\nd\ne\n' \
+  $'a:"k$f"<c 1 _>, "k$u"\nb:"k$f"<c 1 "k$bool">, "k$u2"\nc:"k$g", "k$f2"<c 1 "k$num">, "k$v"\nd:"k$h", "k$e"<c 1 "k$bool">, "k$w"\ne:"k$z"\n' ''
+msg=
+out=$(run types -p mepo -P -n 5 -S <<<'"k$f"<c 1 "k$num">')
+near "$(score_of a <<<"$out")" 0.949338 || msg="a: '$out'"
+near "$(score_of b <<<"$out")" 0 || msg="b: '$out'"
+if [ -n "$msg" ]; then fail "typed mepo: generalizing fact relevant" "$msg"; else ok "typed mepo: generalizing fact relevant"; fi
+
+# 26. a fact's symbol whose type patterns the goal's generalize counts on
+# neither side
+number=26
+# The goal has k$g and k$f2 at any type; c has k$g (relevant), k$f2 at k$num
+# (neither) and k$v (irrelevant): 3.885390 / (3.885390 + 0.150515) =
+# 0.962706. Were k$f2 relevant, c would score 2 * 3.885390 / (2 * 3.885390
+# + 0.150515) = 0.980999; irrelevant, 3.885390 / (3.885390 + 2 * 0.150515)
+# = 0.928094.
+msg=
+out=$(run types -p mepo -P -n 5 -S <<<'"k$g", "k$f2"<c 1 _>')
+near "$(score_of c <<<"$out")" 0.962706 || msg="c: '$out'"
+if [ -n "$msg" ]; then fail "typed mepo: generalized fact neutral" "$msg"; else ok "typed mepo: generalized fact neutral"; fi
+
+# 27. a fact's symbol at a type incompatible with the goal's is irrelevant
+number=27
+# The goal has k$h and k$e at k$num; d has k$h (relevant), k$e at k$bool
+# (irrelevant) and k$w (irrelevant): 3.885390 / (3.885390 + 2 * 0.150515) =
+# 0.928094. Untyped, k$e is relevant: 0.980999.
+msg=
+out=$(run types -p mepo -P -n 5 -S <<<'"k$h", "k$e"<c 1 "k$num">')
+near "$(score_of d <<<"$out")" 0.928094 || msg="typed d: '$out'"
+out=$(run types -p mepo -n 5 -S <<<'"k$h", "k$e"<c 1 "k$num">')
+[ -z "$msg" ] && { near "$(score_of d <<<"$out")" 0.980999 || msg="untyped d: '$out'"; }
+if [ -n "$msg" ]; then fail "typed mepo: incompatible fact irrelevant" "$msg"; else ok "typed mepo: incompatible fact irrelevant"; fi
+
+# 28. typed weights: variables, theories, abstractions, orders and counts
+number=28
+# a has k$g (freq 1, rel 3.885390), the variable x (1.5 * 3.885390 =
+# 5.828085), the theory t (0.5), all relevant to the goal: R = 10.213475.
+# The abstraction l is irrelevant (2.0) and so is k$h, of order 3 and
+# occurring twice: irrel(2) * 1.05 ^ 2 = ln 3 / ln 100 * 1.1025 = 0.263013.
+# a scores 10.213475 / (10.213475 + 2.263013) = 0.818618. With k$h in the
+# goal's assumptions only, it weighs a quarter: 10.213475 / (10.213475 + 2 +
+# 0.065753) = 0.831768.
+corpus tw $'a\nb\n' $'a:"k$g", "x"<v 0>, "t"<t 0>, "l"<a 2>, "k$h"<c 3>*2\nb:"k$y"\n' ''
+msg=
+out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>')
+near "$(score_of a <<<"$out")" 0.818618 || msg="a: '$out'"
+out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>, "k$h"<c 3>@0.5')
+[ -z "$msg" ] && { near "$(score_of a <<<"$out")" 0.831768 || msg="a, k\$h assumed: '$out'"; }
+if [ -n "$msg" ]; then fail "typed mepo weights" "$msg"; else ok "typed mepo weights"; fi
+
+# 29. a goal with no symbol but theories and abstractions starts from the
+# local facts' symbols
+number=29
+# l is local and has k$p, so k$p is relevant: l scores 1, and m, with k$p
+# (freq 2, rel(2) = 1 + 2 / ln 3 = 2.820478) and k$q (irrel(1)), 2.820478 /
+# (2.820478 + 0.150515) = 0.949338 (it is not local).
+corpus fb $'l\nm\nt\n' $'l:"k$p"\nm:"k$p", "k$q"\nt:"t"<t 0>\n' ''
+printf 'l:local\n' > "$WORK/fb.statures"
+msg=
+out=$(run fb -p mepo -P -n 3 -S -F "$WORK/fb.statures" <<<'"t"<t 0>')
+near "$(score_of m <<<"$out")" 0.949338 || msg="m: '$out'"
+if [ -n "$msg" ]; then fail "typed mepo local fallback" "$msg"; else ok "typed mepo local fallback"; fi
+
+# 30. untyped corpora and queries load with -P, and typed ones without it
+number=30
+# Without types, every symbol is a constant of order 1 with no patterns, so
+# -P ranks the test corpus as mepo does. Without -P, types and counts are
+# read and ignored: the typed corpus ranks as its untyped copy. (mepo on the
+# synthetic corpus is too slow for the checked build.)
+msg=
+if ! run lists -p mepo -P -n 1000 -S < "$DATA/lists.queries" > "$WORK/typed.out"; then
+  msg="-P on the untyped lists corpus fails: $(head -1 "$WORK/stderr")"
+elif ! run lists -p mepo -n 1000 -S < "$DATA/lists.queries" > "$WORK/untyped.out"; then
+  msg="mepo on the lists corpus fails: $(head -1 "$WORK/stderr")"
+elif [ ! -s "$WORK/typed.out" ] || ! cmp -s "$WORK/typed.out" "$WORK/untyped.out"; then
+  msg="-P on the untyped lists corpus ranks differently"
+fi
+if [ -z "$msg" ]; then
+  sed 's/<[^>]*>//g; s/\*[0-9]*//g' "$WORK/types.syms" > "$WORK/stripped.syms"
+  cp "$WORK/types.seq" "$WORK/stripped.seq"; cp "$WORK/types.deps" "$WORK/stripped.deps"
+  for m in knn nbayes mepo; do
+    a=$(run types -p $m -n 5 -S <<<'"k$h", "k$e"')
+    b=$(run stripped -p $m -n 5 -S <<<'"k$h", "k$e"')
+    [ -n "$a" ] && [ "$a" = "$b" ] || { msg="$m: typed '$a', stripped '$b'"; break; }
+  done
+fi
+if [ -n "$msg" ]; then fail "typed and untyped files" "$msg"; else ok "typed and untyped files"; fi
+
+# 31. malformed types are errors, -P needs -p mepo and queries
+number=31
+msg=
+for bad in '"k$f"<x 1>' '"k$f"<c>' '"k$f"<c 1 k>' '"k$f"<c 1 "k"(_>' '"k$f"*2'; do
+  if run types -p mepo -P -n 1 <<<"$bad" >/dev/null 2>&1; then
+    msg="query $bad accepted"; break
+  fi
+done
+printf 'a\n' > "$WORK/t.eval"
+if [ -z "$msg" ] && run types -p knn -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
+  msg="-P accepted with knn"
+elif [ -z "$msg" ] && run types -p mepo -P -n 1 -e "$WORK/t.eval" >/dev/null 2>&1; then
+  msg="-P accepted with -e"
+fi
+if [ -n "$msg" ]; then fail "typed input errors" "$msg"; else ok "typed input errors"; fi
+
 [ $failures -eq 0 ]

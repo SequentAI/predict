@@ -17,21 +17,31 @@
 // symbols join the relevant set, and every accepted fact moves the threshold
 // toward 0.85. Facts are ranked in the order they are accepted.
 //
-// Left out, since they need types or terms: the 1.05 ^ (order - 1) factor on
-// a higher-order symbol's irrelevant weight (every symbol weighs as order 1),
-// the 1.5 multiplier on free variables, lambda and theory pseudo-constants,
-// the special treatment of set constants, and the facts Sledgehammer inserts
+// Untyped, every symbol is matched by its whole name, and the parts of
+// Sledgehammer that need types or terms are left out: the 1.05 ^ (order - 1)
+// factor on a higher-order symbol's irrelevant weight (every symbol weighs
+// as order 1), the 1.5 multiplier on free variables, and lambda and theory
+// pseudo-constants. Typed (predict_typed), symbols carry their kind, order
+// and type patterns, and all of these are in. Left out either way: the
+// special treatment of set constants, and the facts Sledgehammer inserts
 // afterwards (ext, set axioms).
 class MePo : public Predictor {
   public:
+    // [types] and [typed], the theorems' typed symbols, are given for
+    // predict_typed and null otherwise.
     MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-      long sym_num, const vector<unsigned char>& statures);
+      long sym_num, const vector<unsigned char>& statures,
+      const TypeTable* types = nullptr, const TypedSyms* typed = nullptr);
 
     void learn(long from, long to);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     // A query feature weighing less than 1 occurs only in the goal's
     // assumptions; one weighing 1 or more occurs in its conclusion.
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
+      long no_adv) const;
+    // MePo over typed symbols, with the query's weights as in
+    // predict_weighted.
+    LDPairVec predict_typed(const vector<TypedSym>& query, long maxth,
       long no_adv) const;
 
   private:
@@ -44,15 +54,45 @@ class MePo : public Predictor {
     double fact_weight(long i, const vector<char>& rel,
       const vector<char>& chained) const;
 
+    // The typed weights and score: [rel] and [chained] hold the ptypes of
+    // each symbol in the relevant set and in the goal's assumptions only.
+    double typed_rel_weight(const TypedSym& s, long freq) const;
+    double typed_irrel_weight(const TypedSym& s, long freq,
+      const LVecVec& chained) const;
+    double typed_fact_weight(long i, const LVecVec& rel,
+      const LVecVec& chained) const;
+    double stature_bonus(long i) const;
+
+    // The iterations of the filter, for at most no_adv facts: [weigh](i)
+    // scores fact i against the relevant set, and [accept](i, fresh) adds
+    // fact i's symbols to it, appending those it changed to [fresh].
+    template <class Weigh, class Accept>
+    LDPairVec filter(long maxth, long no_adv, Weigh weigh,
+      Accept accept) const;
+
     vector<unsigned char> statures;
     // the number of learned facts containing each symbol
     vector<long> freq;
+
+    const TypeTable* types;
+    const TypedSyms* typed;
+    // the learned occurrences of each symbol, by ptype
+    vector<vector<pair<long, long> > > type_counts;
+    // for each typed symbol of each fact, the occurrences of its symbol at
+    // a ptype it generalizes, and at a ptype that generalizes it
+    vector<vector<pair<long, long> > > typed_freq;
 };
 
 // sledgehammer_mepo.ML's default_relevance_fudge and Sledgehammer's default
 // fact_thresholds
 namespace mepo_fudge {
+  const double local_const_multiplier = 1.5;
   const double worse_irrel_freq = 100.0;
+  const double higher_order_irrel_weight = 1.05;
+  const double abs_rel_weight = 0.5;
+  const double abs_irrel_weight = 2.0;
+  const double theory_const_rel_weight = 0.5;
+  const double theory_const_irrel_weight = 0.25;
   const double chained_const_irrel_weight = 0.25;
   const double simp_bonus = 0.15;
   const double local_bonus = 0.55;
@@ -69,14 +109,46 @@ namespace mepo_fudge {
 }
 
 MePo::MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-  long sym_num, const vector<unsigned char>& statures)
+  long sym_num, const vector<unsigned char>& statures,
+  const TypeTable* types, const TypedSyms* typed)
 : Predictor(deps, syms, sym_ths, sym_num), statures(statures),
-  freq(sym_num, 0) {}
+  freq(sym_num, 0), types(types), typed(typed),
+  type_counts(typed ? sym_num : 0) {}
 
 void MePo::learn(long from, long to) {
   for (long i = from; i < to; ++i)
     for (const auto s : syms[i])
       ++freq[s];
+  if (!typed) return;
+
+  for (long i = from; i < to; ++i)
+    for (const auto& ts : (*typed)[i]) {
+      auto& counts = type_counts[ts.sym];
+      auto same = find_if(counts.begin(), counts.end(),
+        [&](const pair<long, long>& c) { return c.first == ts.ptype; });
+      if (same == counts.end()) counts.push_back(make_pair(ts.ptype, ts.count));
+      else same->second += ts.count;
+    }
+
+  // A symbol's frequency at a ptype sums its occurrences at the ptypes the
+  // ptype generalizes (as a relevant symbol) or that generalize it (as an
+  // irrelevant one): sledgehammer_mepo.ML's pconst_freq.
+  map<pair<long, long>, pair<long, long> > memo;
+  typed_freq.assign(typed->size(), {});
+  for (size_t i = 0; i < typed->size(); ++i)
+    for (const auto& ts : (*typed)[i]) {
+      const auto key = make_pair(ts.sym, ts.ptype);
+      auto got = memo.find(key);
+      if (got == memo.end()) {
+        long below = 0, above = 0;
+        for (const auto& c : type_counts[ts.sym]) {
+          if (types->match_ptype(ts.ptype, c.first)) below += c.second;
+          if (types->match_ptype(c.first, ts.ptype)) above += c.second;
+        }
+        got = memo.emplace(key, make_pair(below, above)).first;
+      }
+      typed_freq[i].push_back(got->second);
+    }
 }
 
 // Rare symbols weigh more: 1 + 2 / ln(freq + 1).
@@ -125,8 +197,6 @@ LDPairVec MePo::predict(const LVec& csyms, long maxth, long no_adv) const {
 
 LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
-  using namespace mepo_fudge;
-  const long max_facts = no_adv;
   const long nsyms = freq.size();
 
   // the relevant set starts as the conclusion's symbols, or the assumptions'
@@ -137,6 +207,147 @@ LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
     if (sw.second < 1) chained[sw.first] = 1;
     else rel[sw.first] = concl = true;
   if (!concl) rel = chained;
+
+  return filter(maxth, no_adv,
+    [&](long i) { return fact_weight(i, rel, chained); },
+    [&](long i, vector<long>& fresh) {
+      for (const auto s : syms[i])
+        if (!rel[s]) {
+          rel[s] = 1;
+          fresh.push_back(s);
+        }
+    });
+}
+
+double MePo::stature_bonus(long i) const {
+  using namespace mepo_fudge;
+  // a simp rule's bonus takes precedence over a local fact's
+  if (statures[i] & STATURE_SIMP) return simp_bonus;
+  if (statures[i] & STATURE_LOCAL) return local_bonus;
+  return 0;
+}
+
+// sledgehammer_mepo.ML's rel_pconst_weight: [freq] counts the occurrences
+// at the ptypes this one generalizes.
+double MePo::typed_rel_weight(const TypedSym& s, long freq) const {
+  using namespace mepo_fudge;
+  if (s.kind == 'a') return abs_rel_weight;
+  if (s.kind == 't') return theory_const_rel_weight;
+  return (s.kind == 'v' ? local_const_multiplier : 1.0) *
+    (1.0 + 2.0 / log((double)freq + 1.0));
+}
+
+// x ^ n as sledgehammer_mepo.ML's pow_int computes it
+static double pow_int(double x, long n) {
+  if (n == 0) return 1.0;
+  if (n > 0) return x * pow_int(x, n - 1);
+  return pow_int(x, n + 1) / x;
+}
+
+// sledgehammer_mepo.ML's irrel_pconst_weight: [freq] counts the occurrences
+// at the ptypes that generalize this one. A symbol whose ptype generalizes
+// one of the goal's assumptions only weighs a quarter.
+double MePo::typed_irrel_weight(const TypedSym& s, long freq,
+  const LVecVec& chained) const {
+  using namespace mepo_fudge;
+  if (s.kind == 'a') return abs_irrel_weight;
+  if (s.kind == 't') return theory_const_irrel_weight;
+  const long k = (long)ceil(worse_irrel_freq);
+  const double w =
+    (freq < k ? log((double)freq + 1.0) / log(worse_irrel_freq)
+              : (1.0 + 2.0 / log((double)freq + 1.0)) /
+                (1.0 + 2.0 / log((double)k + 1.0))) *
+    pow_int(higher_order_irrel_weight, types->order(s.ptype) - 1);
+  double res = (s.kind == 'v' ? local_const_multiplier : 1.0) * w;
+  for (const auto c : chained[s.sym])
+    if (types->match_ptype(s.ptype, c)) return res * chained_const_irrel_weight;
+  return res;
+}
+
+// sledgehammer_mepo.ML's fact_weight: a symbol is relevant if its ptype
+// generalizes one of its symbol's in the relevant set, counts on neither
+// side if one of those generalizes its ptype, and is irrelevant otherwise.
+// An irrelevant symbol that a relevant one of the fact generalizes also
+// counts on neither side. A fact whose symbols on either side are all
+// abstractions and theories scores 0.
+double MePo::typed_fact_weight(long i, const LVecVec& rel,
+  const LVecVec& chained) const {
+  const auto& ts = (*typed)[i];
+  vector<size_t> relevant, irrelevant;
+  bool odd = true;
+  for (size_t j = 0; j < ts.size(); ++j) {
+    const auto& r = rel[ts[j].sym];
+    if (any_of(r.begin(), r.end(),
+          [&](long p) { return types->match_ptype(ts[j].ptype, p); }))
+      relevant.push_back(j);
+    else if (none_of(r.begin(), r.end(),
+          [&](long p) { return types->match_ptype(p, ts[j].ptype); }))
+      irrelevant.push_back(j);
+    else
+      continue;
+    odd = odd && (ts[j].kind == 'a' || ts[j].kind == 't');
+  }
+  if (relevant.empty() || odd) return 0;
+
+  double relw = 0, irrelw = -stature_bonus(i);
+  for (const auto j : relevant)
+    relw += typed_rel_weight(ts[j], typed_freq[i][j].first);
+  for (const auto j : irrelevant) {
+    if (any_of(relevant.begin(), relevant.end(), [&](size_t k) {
+          return ts[k].sym == ts[j].sym &&
+            types->match_ptype(ts[k].ptype, ts[j].ptype); }))
+      continue;
+    irrelw += typed_irrel_weight(ts[j], typed_freq[i][j].second, chained);
+  }
+  const double res = relw / (relw + irrelw);
+  return isfinite(res) ? res : 0;
+}
+
+LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
+  long no_adv) const {
+  const long nsyms = freq.size();
+  auto add = [](LVec& ptypes, long p) {
+    if (find(ptypes.begin(), ptypes.end(), p) != ptypes.end()) return false;
+    ptypes.push_back(p);
+    return true;
+  };
+
+  // as in predict_weighted; and if the goal has no symbol but abstractions
+  // and theories, the relevant set starts as the symbols of the local facts
+  // (Sledgehammer's if_empty_replace_with_scope)
+  LVecVec rel(nsyms), chained(nsyms);
+  bool concl = false, significant = false;
+  for (const auto& q : query) {
+    if (q.weight < 1) add(chained[q.sym], q.ptype);
+    else {
+      add(rel[q.sym], q.ptype);
+      concl = true;
+    }
+    significant = significant || (q.kind != 'a' && q.kind != 't');
+  }
+  if (!concl) rel = chained;
+  if (!significant) {
+    rel.assign(nsyms, {});
+    for (long i = 0; i < maxth; ++i)
+      if (statures[i] & STATURE_LOCAL)
+        for (const auto& ts : (*typed)[i]) add(rel[ts.sym], ts.ptype);
+  }
+
+  return filter(maxth, no_adv,
+    [&](long i) { return typed_fact_weight(i, rel, chained); },
+    [&](long i, vector<long>& fresh) {
+      for (const auto& ts : (*typed)[i])
+        if (add(rel[ts.sym], ts.ptype) &&
+            find(fresh.begin(), fresh.end(), ts.sym) == fresh.end())
+          fresh.push_back(ts.sym);
+    });
+}
+
+template <class Weigh, class Accept>
+LDPairVec MePo::filter(long maxth, long no_adv, Weigh weigh,
+  Accept accept) const {
+  using namespace mepo_fudge;
+  const long max_facts = no_adv;
 
   enum { HOPEFUL, HOPELESS, ACCEPTED, DROPPED };
   vector<char> status(maxth, HOPEFUL);
@@ -162,7 +373,7 @@ LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
     LDPairVec candidates;
     for (const auto i : hopeful) {
       if (!cached[i]) {
-        weight[i] = fact_weight(i, rel, chained);
+        weight[i] = weigh(i);
         cached[i] = 1;
       }
       if (weight[i] >= threshold) candidates.push_back(make_pair(i, weight[i]));
@@ -199,11 +410,7 @@ LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
       const long i = candidates[c].first;
       status[i] = ACCEPTED;
       accepted.push_back(i);
-      for (const auto s : syms[i])
-        if (!rel[s]) {
-          rel[s] = 1;
-          fresh.push_back(s);
-        }
+      accept(i, fresh);
     }
     hopeful.clear();
     for (long c = naccept; c < (long)candidates.size(); ++c)
@@ -230,7 +437,7 @@ LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
   for (long i = 0; i < maxth; ++i)
     if (status[i] != ACCEPTED)
       ans.push_back(make_pair(i,
-        syms[i].empty() ? 0.0 : fact_weight(i, rel, chained)));
+        syms[i].empty() ? 0.0 : weigh(i)));
   partial_sort(ans.begin() + nacc,
     ans.begin() + max(nacc, min(no_adv, maxth)), ans.end(), sortfun);
   return ans;
