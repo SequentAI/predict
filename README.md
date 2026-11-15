@@ -96,7 +96,7 @@ largest weight, and an empty line is a query with no features.
 
 For `mepo -P`, a feature in `<syms>` or a query may be followed by its type,
 and in `<syms>` then by `*count`, how often the theorem has the symbol at
-that type (1 if absent):
+that type (1 if absent; at least 1 for kinds `c` and `v`):
 
 ```
 id:"Thy$f"<c 1 _>*2, "x"<v 0>, "%thy%Thy"<t 0>, "Thy$g"<c 2 "Thy$list"(_)>

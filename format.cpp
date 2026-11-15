@@ -237,6 +237,10 @@ vector<Token> parse_string_list(string::iterator begin,
         exit_error("Occurrence counts are not allowed in queries!");
       ++begin;
       t.count = read_count(begin, end, "occurrence count");
+      // a constant's or variable's weight divides by its frequency's log
+      if (t.count == 0 && t.kind != 'a' && t.kind != 't')
+        exit_error("Occurrence count 0 of the constant or variable `" +
+                   t.feature + "'!");
     }
     if (begin != end && *begin == '@') {
       if (!weighted)

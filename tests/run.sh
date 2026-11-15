@@ -855,9 +855,16 @@ for bad in '"k$f"<x 1>' '"k$f"<c>' '"k$f"<c 1 k>' '"k$f"<c 1 "k"(_>' '"k$f"*2' \
     msg="query $bad accepted"; break
   fi
 done
-corpus big $'a\n' $'a:"k$f"<c 1>*1000000001\n' ''
-if [ -z "$msg" ] && run big -p mepo -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
-  msg="corpus count 1000000001 accepted"
+for bad in '"k$f"<c 1>*1000000001' '"k$f"<c 1>*0, "k$g"' '"x"<v 0>*0'; do
+  corpus big $'a\n' "a:$bad"$'\n' ''
+  if [ -z "$msg" ] && run big -p mepo -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
+    msg="corpus $bad accepted"
+  fi
+done
+# abstractions and theories may have count 0: their weights ignore counts
+corpus abs0 $'a\n' $'a:"k$f", "l"<a 1>*0\n' ''
+if [ -z "$msg" ] && ! run abs0 -p mepo -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
+  msg="corpus abstraction count 0 rejected"
 fi
 printf 'a\n' > "$WORK/t.eval"
 if [ -z "$msg" ] && run types -p knn -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
