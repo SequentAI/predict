@@ -27,11 +27,13 @@
 // afterwards (ext, set axioms).
 class MePo : public Predictor {
   public:
-    // [types] and [typed], the theorems' typed symbols, are given for
+    // [types], [typed], the theorems' typed symbols, and [freq_only],
+    // their occurrences counted only in frequencies, are given for
     // predict_typed and null otherwise.
     MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
       long sym_num, const vector<unsigned char>& statures,
-      const TypeTable* types = nullptr, const TypedSyms* typed = nullptr);
+      const TypeTable* types = nullptr, const TypedSyms* typed = nullptr,
+      const TypedSyms* freq_only = nullptr);
 
     void learn(long from, long to);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
@@ -76,6 +78,7 @@ class MePo : public Predictor {
 
     const TypeTable* types;
     const TypedSyms* typed;
+    const TypedSyms* freq_only;
     // the learned occurrences of each symbol, by ptype
     vector<vector<pair<long, long> > > type_counts;
     // for each typed symbol of each fact, the occurrences of its symbol at
@@ -110,9 +113,9 @@ namespace mepo_fudge {
 
 MePo::MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
   long sym_num, const vector<unsigned char>& statures,
-  const TypeTable* types, const TypedSyms* typed)
+  const TypeTable* types, const TypedSyms* typed, const TypedSyms* freq_only)
 : Predictor(deps, syms, sym_ths, sym_num), statures(statures),
-  freq(sym_num, 0), types(types), typed(typed),
+  freq(sym_num, 0), types(types), typed(typed), freq_only(freq_only),
   type_counts(typed ? sym_num : 0) {}
 
 void MePo::learn(long from, long to) {
@@ -121,14 +124,21 @@ void MePo::learn(long from, long to) {
       ++freq[s];
   if (!typed) return;
 
-  for (long i = from; i < to; ++i)
-    for (const auto& ts : (*typed)[i]) {
-      auto& counts = type_counts[ts.sym];
-      auto same = find_if(counts.begin(), counts.end(),
-        [&](const pair<long, long>& c) { return c.first == ts.ptype; });
-      if (same == counts.end()) counts.push_back(make_pair(ts.ptype, ts.count));
-      else same->second += ts.count;
-    }
+  // the symbols' occurrences, including those only counted in frequencies
+  // (sledgehammer_mepo.ML counts every constant occurrence of a fact, the
+  // quantifiers that are not its symbols among them)
+  auto count = [&](const TypedSym& ts) {
+    auto& counts = type_counts[ts.sym];
+    auto same = find_if(counts.begin(), counts.end(),
+      [&](const pair<long, long>& c) { return c.first == ts.ptype; });
+    if (same == counts.end()) counts.push_back(make_pair(ts.ptype, ts.count));
+    else same->second += ts.count;
+  };
+  for (long i = from; i < to; ++i) {
+    for (const auto& ts : (*typed)[i]) count(ts);
+    if (freq_only)
+      for (const auto& ts : (*freq_only)[i]) count(ts);
+  }
 
   // A symbol's frequency at a ptype sums its occurrences at the ptypes the
   // ptype generalizes (as a relevant symbol) or that generalize it (as an

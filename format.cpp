@@ -138,10 +138,13 @@ struct PatternText {
 
 // A feature as written, with its optional parts: a weight (queries), an
 // occurrence count (<syms>), and a type: a kind, an order and patterns.
+// A frequency-only token (`+n` in <syms>) counts its occurrences in
+// frequencies without being a symbol of the theorem.
 struct Token {
   string feature;
   double weight = 1.0;
   long count = 1;
+  bool freq_only = false;
   bool typed = false;
   char kind = 'c';
   long order = 1;
@@ -215,7 +218,8 @@ void read_type(string::iterator &begin, string::iterator end, Token &t) {
 // where a string writes `"` as `\"`, `\` as `\\` and a newline as `\n`.
 // An empty range is an empty list. A string may be followed by a type
 // `<...>`, then, if [weighted], by `@w`, a finite non-negative weight (1.0
-// if absent), and otherwise by `*n`, an occurrence count (1 if absent).
+// if absent), and otherwise by `*n`, an occurrence count (1 if absent), or
+// by `+n`, a frequency-only occurrence count (at least 1).
 vector<Token> parse_string_list(string::iterator begin,
   string::iterator end, bool weighted) {
   vector<Token> result;
@@ -241,6 +245,15 @@ vector<Token> parse_string_list(string::iterator begin,
       if (t.count == 0 && t.kind != 'a' && t.kind != 't')
         exit_error("Occurrence count 0 of the constant or variable `" +
                    t.feature + "'!");
+    }
+    else if (begin != end && *begin == '+') {
+      if (weighted)
+        exit_error("Frequency-only counts are not allowed in queries!");
+      ++begin;
+      t.freq_only = true;
+      t.count = read_count(begin, end, "frequency-only count");
+      if (t.count == 0)
+        exit_error("Frequency-only count 0 of `" + t.feature + "'!");
     }
     if (begin != end && *begin == '@') {
       if (!weighted)
@@ -363,15 +376,27 @@ TypedSym typed_sym(long sym, const Token &t, TypeTable &types) {
     t.weight};
 }
 
+// Adds [ts] to a theorem's typed symbols [ths], adding up the counts of a
+// symbol repeated with an equal type.
+void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
+  auto same = find_if(ths.begin(), ths.end(), [&](const TypedSym& o) {
+    return o.sym == ts.sym && o.ptype == ts.ptype; });
+  if (same == ths.end()) ths.push_back(ts);
+  else same->count += ts.count;
+}
+
 // parses strings of the format:
 // thmid:"feature1", "feature2", ..., "featuren"
 // A feature repeated on a line counts once. With [types], also reads each
 // theorem's typed symbols into [typed]: a feature repeated with an equal
-// type counts once, its occurrence counts added up.
+// type counts once, its occurrence counts added up; and its frequency-only
+// tokens into [freq_only] alike, registering a new feature with no
+// theorems. Without [types], frequency-only tokens are ignored.
 void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
                long &sym_num, const SLMap &th_no,
                SLMap &sym_no, SVec& no_sym,
-               TypeTable *types = nullptr, TypedSyms *typed = nullptr) {
+               TypeTable *types = nullptr, TypedSyms *typed = nullptr,
+               TypedSyms *freq_only = nullptr) {
   ifstream ic(fname);
   string line;
   while (getline(ic, line)) {
@@ -389,6 +414,19 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
     for (const auto& t : parse_string_list(line.begin() + pos + 1, line.end(), false)) {
       const string& f = t.feature;
       auto ftr_got = sym_no.find(f);
+      if (t.freq_only) {
+        if (!types) continue;
+        long s;
+        if (ftr_got == sym_no.end()) {
+          s = sym_num;
+          sym_ths.push_back(vector<long>());
+          sym_no[f] = sym_num++;
+          no_sym.push_back(f);
+        }
+        else s = ftr_got->second;
+        add_typed((*freq_only)[th], typed_sym(s, t, *types));
+        continue;
+      }
       long s;
       if (ftr_got == sym_no.end()) {
         s = sym_num;
@@ -407,14 +445,7 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
           sym_ths[s].push_back(th);
         }
       }
-      if (types) {
-        const TypedSym ts = typed_sym(s, t, *types);
-        auto& ths = (*typed)[th];
-        auto same = find_if(ths.begin(), ths.end(), [&](const TypedSym& o) {
-          return o.sym == ts.sym && o.ptype == ts.ptype; });
-        if (same == ths.end()) ths.push_back(ts);
-        else same->count += ts.count;
-      }
+      if (types) add_typed((*typed)[th], typed_sym(s, t, *types));
     }
   }
 }

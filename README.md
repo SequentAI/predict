@@ -115,6 +115,14 @@ counts; repeated with other types, it is one feature with several types.
 Without `-P`, types and counts are read and ignored, so a typed corpus ranks
 as the corpus without them.
 
+A feature in `<syms>` may instead be followed by `+count` (at least 1): a
+frequency-only token, occurrences of the symbol at that type which count in
+its frequencies (below) but don't make it a symbol of the theorem.
+Sledgehammer's frequencies count every constant occurrence of a fact,
+including the quantifiers it doesn't take as the fact's symbols, so
+`"bool$!"<c 2 _>+3` gives three such occurrences of a quantifier. Without
+`-P`, frequency-only tokens are ignored.
+
 `<statures>`, given with `-F` and read only by `mepo` (also inside `mesh`),
 flags theorems:
 
@@ -203,8 +211,8 @@ generalizes the type of a symbol of that name in the relevant set, neither
 relevant nor irrelevant if one of those generalizes its type or a relevant
 symbol of the theorem with the same name generalizes it, and irrelevant
 otherwise. A relevant symbol's `freq` sums the counts of its name at
-the types its type generalizes, over all theorems, and an irrelevant one's at
-the types that generalize its type. Free variables (`v`) weigh 1.5 times as
+the types its type generalizes, over all theorems (frequency-only tokens
+included), and an irrelevant one's at the types that generalize its type. Free variables (`v`) weigh 1.5 times as
 much; `irrel` weights are multiplied by `1.05 ^ (order - 1)`; `a` weighs 0.5
 relevant and 2 irrelevant, and `t` 0.5 and 0.25, whatever their frequency. A
 theorem whose relevant and irrelevant symbols are all `a` and `t` scores
