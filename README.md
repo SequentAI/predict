@@ -199,16 +199,16 @@ as Sledgehammer does with them, which needs a query on standard input (not
 matches it with the type variables `_` instantiated; a type with more
 patterns than another generalizes it if its first patterns do. A theorem's symbol counts as relevant if its type
 generalizes the type of a symbol of that name in the relevant set, neither
-relevant nor irrelevant if one of those generalizes its type, and irrelevant
-otherwise (or if a relevant symbol of the theorem with the same name
-generalizes it). A relevant symbol's `freq` sums the counts of its name at
+relevant nor irrelevant if one of those generalizes its type or a relevant
+symbol of the theorem with the same name generalizes it, and irrelevant
+otherwise. A relevant symbol's `freq` sums the counts of its name at
 the types its type generalizes, over all theorems, and an irrelevant one's at
 the types that generalize its type. Free variables (`v`) weigh 1.5 times as
 much; `irrel` weights are multiplied by `1.05 ^ (order - 1)`; `a` weighs 0.5
 relevant and 2 irrelevant, and `t` 0.5 and 0.25, whatever their frequency. A
 theorem whose relevant and irrelevant symbols are all `a` and `t` scores
-0. If the query has no `c` or `v` symbol, the relevant set starts as the
-symbols of the local theorems (`-F`).
+0. If the query has no symbol, the relevant set starts as the symbols of
+the local theorems (`-F`).
 
 `mepo-cosine` is upstream's `mepo`. It ranks the theorems by TF-IDF cosine
 similarity to the query in batches of 100: after each batch, the symbols of

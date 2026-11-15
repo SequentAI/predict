@@ -312,21 +312,20 @@ LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
     return true;
   };
 
-  // as in predict_weighted; and if the goal has no symbol but abstractions
-  // and theories, the relevant set starts as the symbols of the local facts
-  // (Sledgehammer's if_empty_replace_with_scope)
+  // as in predict_weighted; and if the query has no symbol, the relevant
+  // set starts as the symbols of the local facts (Sledgehammer's
+  // if_empty_replace_with_scope)
   LVecVec rel(nsyms), chained(nsyms);
-  bool concl = false, significant = false;
+  bool concl = false;
   for (const auto& q : query) {
     if (q.weight < 1) add(chained[q.sym], q.ptype);
     else {
       add(rel[q.sym], q.ptype);
       concl = true;
     }
-    significant = significant || (q.kind != 'a' && q.kind != 't');
   }
   if (!concl) rel = chained;
-  if (!significant) {
+  if (query.empty()) {
     rel.assign(nsyms, {});
     for (long i = 0; i < maxth; ++i)
       if (statures[i] & STATURE_LOCAL)

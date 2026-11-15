@@ -799,17 +799,21 @@ out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>, "k$h"<c 3>@0.5')
 [ -z "$msg" ] && { near "$(score_of a <<<"$out")" 0.831768 || msg="a, k\$h assumed: '$out'"; }
 if [ -n "$msg" ]; then fail "typed mepo weights" "$msg"; else ok "typed mepo weights"; fi
 
-# 29. a goal with no symbol but theories and abstractions starts from the
-# local facts' symbols
+# 29. a goal with no symbol starts from the local facts' symbols; one with
+# only a theory symbol doesn't
 number=29
-# l is local and has k$p, so k$p is relevant: l scores 1, and m, with k$p
-# (freq 2, rel(2) = 1 + 2 / ln 3 = 2.820478) and k$q (irrel(1)), 2.820478 /
-# (2.820478 + 0.150515) = 0.949338 (it is not local).
+# With no symbol, l is local and has k$p, so k$p is relevant: l scores 1,
+# and m, with k$p (freq 2, rel(2) = 1 + 2 / ln 3 = 2.820478) and k$q
+# (irrel(1)), 2.820478 / (2.820478 + 0.150515) = 0.949338 (it is not local).
+# With "t" alone, only t has a relevant symbol, and it is a theory, so every
+# theorem scores 0.
 corpus fb $'l\nm\nt\n' $'l:"k$p"\nm:"k$p", "k$q"\nt:"t"<t 0>\n' ''
 printf 'l:local\n' > "$WORK/fb.statures"
 msg=
+out=$(run fb -p mepo -P -n 3 -S -F "$WORK/fb.statures" <<<'')
+near "$(score_of m <<<"$out")" 0.949338 || msg="m, empty query: '$out'"
 out=$(run fb -p mepo -P -n 3 -S -F "$WORK/fb.statures" <<<'"t"<t 0>')
-near "$(score_of m <<<"$out")" 0.949338 || msg="m: '$out'"
+[ -z "$msg" ] && { near "$(score_of m <<<"$out")" 0 || msg="m, query t: '$out'"; }
 if [ -n "$msg" ]; then fail "typed mepo local fallback" "$msg"; else ok "typed mepo local fallback"; fi
 
 # 30. untyped corpora and queries load with -P, and typed ones without it
