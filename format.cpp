@@ -148,17 +148,19 @@ struct Token {
   vector<PatternText> patterns;
 };
 
-// Reads a non-negative decimal integer at [begin], leaving [begin] after it.
+// Reads a decimal integer from 0 to 10^9 at [begin], leaving [begin] after
+// it. The bound keeps the sums of counts over a corpus from overflowing.
 long read_count(string::iterator &begin, string::iterator end,
   const string &what) {
+  const long max_count = 1000000000;
   const auto start = begin;
   while (begin != end && isdigit((unsigned char)*begin)) ++begin;
   const string digits(start, begin);
   char *rest;
   errno = 0;
   const long n = strtol(digits.c_str(), &rest, 10);
-  if (digits.empty() || *rest != '\0' || errno != 0)
-    exit_error("Bad " + what + " `" + digits + "'!");
+  if (digits.empty() || *rest != '\0' || errno != 0 || n > max_count)
+    exit_error("Bad " + what + " `" + digits + "' (at most 10^9)!");
   return n;
 }
 

@@ -108,7 +108,8 @@ pseudo-constant; `order` is the order of the symbol's type (0 for a
 non-function, 1 for a first-order function); and each pattern, preceded by a
 space, is a type argument of the symbol, `_` for a type variable or a quoted
 type constructor, followed by its argument patterns in parentheses, separated
-by a comma and one space. A feature without a type is a constant of order 1
+by a comma and one space. Orders and counts are at most 10^9. A feature
+without a type is a constant of order 1
 with no patterns. A feature repeated with the same type on a line adds up its
 counts; repeated with other types, it is one feature with several types.
 Without `-P`, types and counts are read and ignored, so a typed corpus ranks

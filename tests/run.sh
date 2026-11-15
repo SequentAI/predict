@@ -797,9 +797,9 @@ out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>')
 near "$(score_of a <<<"$out")" 0.818618 || msg="a: '$out'"
 out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>, "k$h"<c 3>@0.5')
 [ -z "$msg" ] && { near "$(score_of a <<<"$out")" 0.831768 || msg="a, k\$h assumed: '$out'"; }
-# an irrelevant symbol of the largest order weighs 1.05 ^ (2^63 - 2) = inf: c
-# scores 0
-corpus hi $'c\n' $'c:"k$g", "k$u"<c 9223372036854775807>\n' ''
+# an irrelevant symbol of the largest order weighs 1.05 ^ (10^9 - 1) = inf:
+# c scores 0
+corpus hi $'c\n' $'c:"k$g", "k$u"<c 1000000000>\n' ''
 [ -z "$msg" ] && { out=$(run hi -p mepo -P -n 1 -S <<<'"k$g"') &&
   near "$(score_of c <<<"$out")" 0 || msg="c, the largest order: '$out'"; }
 if [ -n "$msg" ]; then fail "typed mepo weights" "$msg"; else ok "typed mepo weights"; fi
@@ -849,11 +849,16 @@ if [ -n "$msg" ]; then fail "typed and untyped files" "$msg"; else ok "typed and
 # 31. malformed types are errors, -P needs -p mepo and queries
 number=31
 msg=
-for bad in '"k$f"<x 1>' '"k$f"<c>' '"k$f"<c 1 k>' '"k$f"<c 1 "k"(_>' '"k$f"*2'; do
+for bad in '"k$f"<x 1>' '"k$f"<c>' '"k$f"<c 1 k>' '"k$f"<c 1 "k"(_>' '"k$f"*2' \
+    '"k$f"<c 1000000001>'; do
   if run types -p mepo -P -n 1 <<<"$bad" >/dev/null 2>&1; then
     msg="query $bad accepted"; break
   fi
 done
+corpus big $'a\n' $'a:"k$f"<c 1>*1000000001\n' ''
+if [ -z "$msg" ] && run big -p mepo -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
+  msg="corpus count 1000000001 accepted"
+fi
 printf 'a\n' > "$WORK/t.eval"
 if [ -z "$msg" ] && run types -p knn -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
   msg="-P accepted with knn"
