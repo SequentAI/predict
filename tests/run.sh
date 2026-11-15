@@ -797,10 +797,11 @@ out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>')
 near "$(score_of a <<<"$out")" 0.818618 || msg="a: '$out'"
 out=$(run tw -p mepo -P -n 2 -S <<<'"k$g", "x"<v 0>, "t"<t 0>, "k$h"<c 3>@0.5')
 [ -z "$msg" ] && { near "$(score_of a <<<"$out")" 0.831768 || msg="a, k\$h assumed: '$out'"; }
-# an irrelevant symbol of order 1000000 weighs 1.05 ^ 999999 = inf: c scores 0
-corpus hi $'c\n' $'c:"k$g", "k$u"<c 1000000>\n' ''
+# an irrelevant symbol of the largest order weighs 1.05 ^ (2^63 - 2) = inf: c
+# scores 0
+corpus hi $'c\n' $'c:"k$g", "k$u"<c 9223372036854775807>\n' ''
 [ -z "$msg" ] && { out=$(run hi -p mepo -P -n 1 -S <<<'"k$g"') &&
-  near "$(score_of c <<<"$out")" 0 || msg="c, order 1000000: '$out'"; }
+  near "$(score_of c <<<"$out")" 0 || msg="c, the largest order: '$out'"; }
 if [ -n "$msg" ]; then fail "typed mepo weights" "$msg"; else ok "typed mepo weights"; fi
 
 # 29. a goal with no symbol starts from the local facts' symbols; one with
