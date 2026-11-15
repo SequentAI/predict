@@ -874,4 +874,42 @@ elif [ -z "$msg" ] && run types -p mepo -P -n 1 -e "$WORK/t.eval" >/dev/null 2>&
 fi
 if [ -n "$msg" ]; then fail "typed input errors" "$msg"; else ok "typed input errors"; fi
 
+# 32. frequency-only tokens count in typed frequencies and nowhere else
+number=32
+# a has k$g (freq 1, rel 3.885390) relevant and k$h irrelevant. b's 98
+# frequency-only occurrences of k$h at a's type make k$h's freq 99, so
+# irrel(99) = ln 100 / ln 100 = 1 and a scores 3.885390 / 4.885390 =
+# 0.795308. At an incompatible type they don't count: k$h's freq stays 1,
+# irrel(1) = ln 2 / ln 100 = 0.150515 and a scores 0.962706. They are no
+# symbols of b: with the query k$z, which only a frequency-only token has,
+# every theorem scores 0. Without -P they are ignored.
+corpus fo $'a\nb\n' $'a:"k$g", "k$h"<c 1 "k$num">\nb:"k$h"<c 1 "k$num">+98, "k$z"+5\n' ''
+corpus fox $'a\nb\n' $'a:"k$g", "k$h"<c 1 "k$num">\nb:"k$h"<c 1 "k$bool">+98\n' ''
+corpus fos $'a\nb\n' $'a:"k$g", "k$h"<c 1 "k$num">\nb:\n' ''
+msg=
+out=$(run fo -p mepo -P -n 2 -S <<<'"k$g"')
+near "$(score_of a <<<"$out")" 0.795308 || msg="a: '$out'"
+[ -z "$msg" ] && { out=$(run fox -p mepo -P -n 2 -S <<<'"k$g"') &&
+  near "$(score_of a <<<"$out")" 0.962706 || msg="a, other type: '$out'"; }
+[ -z "$msg" ] && { out=$(run fo -p mepo -P -n 2 -S <<<'"k$z"') &&
+  near "$(score_of a <<<"$out")" 0 && near "$(score_of b <<<"$out")" 0 ||
+  msg="query k\$z: '$out'"; }
+if [ -z "$msg" ]; then
+  for m in knn nbayes mepo; do
+    a=$(run fo -p $m -n 2 -S <<<'"k$g", "k$z"')
+    b=$(run fos -p $m -n 2 -S <<<'"k$g", "k$z"')
+    [ -n "$a" ] && [ "$a" = "$b" ] || { msg="$m: with '$a', without '$b'"; break; }
+  done
+fi
+for bad in '"k$f"+0' '"k$f"<c 1>+1000000001'; do
+  corpus big $'a\n' "a:\"k\$g\", $bad"$'\n' ''
+  if [ -z "$msg" ] && run big -p mepo -P -n 1 <<<'"k$g"' >/dev/null 2>&1; then
+    msg="corpus $bad accepted"
+  fi
+done
+if [ -z "$msg" ] && run fo -p mepo -P -n 1 <<<'"k$g"+2' >/dev/null 2>&1; then
+  msg="query with +2 accepted"
+fi
+if [ -n "$msg" ]; then fail "frequency-only tokens" "$msg"; else ok "frequency-only tokens"; fi
+
 [ $failures -eq 0 ]

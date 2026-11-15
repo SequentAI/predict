@@ -8,7 +8,7 @@
 #include "rforest.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.5.0";
+const string version_str = "0.6.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -267,9 +267,10 @@ int main(int argc, char* argv[]) {
 
   read_deps(depsf, th_no, deps);
   TypeTable types;
-  TypedSyms typed(typed_mepo ? no_th.size() : 0);
+  TypedSyms typed(typed_mepo ? no_th.size() : 0),
+    freq_only(typed_mepo ? no_th.size() : 0);
   read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
-    typed_mepo ? &types : nullptr, &typed);
+    typed_mepo ? &types : nullptr, &typed, &freq_only);
 
   vector<unsigned char> statures(no_th.size(), 0);
   if (!staturesf.empty())
@@ -284,7 +285,8 @@ int main(int argc, char* argv[]) {
     predictor.reset(new kNN(deps, syms, sym_ths, sym_num, credit_deps));
   else if (method == "mepo")
     predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures,
-      typed_mepo ? &types : nullptr, typed_mepo ? &typed : nullptr));
+      typed_mepo ? &types : nullptr, typed_mepo ? &typed : nullptr,
+      typed_mepo ? &freq_only : nullptr));
   else if (method == "mepo-cosine")
     predictor.reset(new MePoCosine(deps, syms, sym_ths, sym_num));
   else if (method == "nbayes" || method == "nbayes-dense")
