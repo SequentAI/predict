@@ -30,7 +30,7 @@ build from a source archive still says what it is.
 ## Usage
 
 ```
-predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>]
+predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>] [-P]
 ```
 
 `predict` learns every theorem of `<seq>`, then reads one query per line on
@@ -91,6 +91,29 @@ to its `nbayes`, and `mesh` to its `mepo` and `mash`. The other methods ignore
 weights.
 Features no theorem has are ignored, a repeated feature counts once with its
 largest weight, and an empty line is a query with no features.
+
+### Typed symbols
+
+For `mepo -P`, a feature in `<syms>` or a query may be followed by its type,
+and in `<syms>` then by `*count`, how often the theorem has the symbol at
+that type (1 if absent; at least 1 for kinds `c` and `v`):
+
+```
+id:"Thy$f"<c 1 _>*2, "x"<v 0>, "%thy%Thy"<t 0>, "Thy$g"<c 2 "Thy$list"(_)>
+```
+
+The type is `<kind order patterns>`: `kind` is `c` for a constant, `v` for a
+free variable, `a` for the lambda pseudo-constant and `t` for a theory
+pseudo-constant; `order` is the order of the symbol's type (0 for a
+non-function, 1 for a first-order function); and each pattern, preceded by a
+space, is a type argument of the symbol, `_` for a type variable or a quoted
+type constructor, followed by its argument patterns in parentheses, separated
+by a comma and one space. Orders and counts are at most 10^9. A feature
+without a type is a constant of order 1
+with no patterns. A feature repeated with the same type on a line adds up its
+counts; repeated with other types, it is one feature with several types.
+Without `-P`, types and counts are read and ignored, so a typed corpus ranks
+as the corpus without them.
 
 `<statures>`, given with `-F` and read only by `mepo` (also inside `mesh`),
 flags theorems:
@@ -171,6 +194,23 @@ symbol counts as order 1), the 1.5 multiplier on free variables, the lambda
 and theory pseudo-constants, the treatment of set constants, and the facts
 added after filtering (`ext`, set axioms).
 
+With `-P`, `mepo` reads the symbols' types ("Typed symbols" above) and scores
+as Sledgehammer does with them, which needs a query on standard input (not
+`-e`). A symbol is a name with a type, and one type generalizes another if it
+matches it with the type variables `_` instantiated; a type with more
+patterns than another generalizes it if its first patterns do. A theorem's symbol counts as relevant if its type
+generalizes the type of a symbol of that name in the relevant set, neither
+relevant nor irrelevant if one of those generalizes its type or a relevant
+symbol of the theorem with the same name generalizes it, and irrelevant
+otherwise. A relevant symbol's `freq` sums the counts of its name at
+the types its type generalizes, over all theorems, and an irrelevant one's at
+the types that generalize its type. Free variables (`v`) weigh 1.5 times as
+much; `irrel` weights are multiplied by `1.05 ^ (order - 1)`; `a` weighs 0.5
+relevant and 2 irrelevant, and `t` 0.5 and 0.25, whatever their frequency. A
+theorem whose relevant and irrelevant symbols are all `a` and `t` scores
+0. If the query has no symbol, the relevant set starts as the symbols of
+the local theorems (`-F`).
+
 `mepo-cosine` is upstream's `mepo`. It ranks the theorems by TF-IDF cosine
 similarity to the query in batches of 100: after each batch, the symbols of
 its theorems join the query, each weighted by the highest score of a theorem
@@ -226,7 +266,8 @@ scores equal.
 - `cosine`, `mash` and `mesh` are new, and `-c` turns off `knn`'s credit to
   the dependencies of neighbours.
 - `mepo` is Meng and Paulson's relevance filter; upstream's `mepo` is
-  `mepo-cosine`. `-F` gives `mepo` the theorems' statures.
+  `mepo-cosine`. `-F` gives `mepo` the theorems' statures, and `-P` makes it
+  match symbols by their types.
 - `knn` sorts only as many neighbours as it needs.
 - `-S` prints scores; `--version` prints the version.
 

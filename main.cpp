@@ -8,7 +8,7 @@
 #include "rforest.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.4.0";
+const string version_str = "0.5.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -35,6 +35,7 @@ const string usage_str =
   "               (default 20; 0 for all)\n"
   " MePo (also in MeSh):\n"
   "  -F <file>    file giving the statures (simp, local) of theorems\n"
+  "  -P           (mepo only, with queries) match symbols by their types\n"
   " MeSh:\n"
   "  -T <cut>     how MeSh cuts its inputs for M predictions: 2M+25 (default)\n"
   "               cuts MePo to M and MaSh to 2M+25 theorems, 51n/50 cuts both\n"
@@ -63,16 +64,23 @@ void print_prediction(LDPairVec prediction, long n_predictions,
   cout << endl;
 }
 
+// With [types], [p] is a MePo over typed symbols.
 void interaction(unique_ptr<Predictor>& p, long predno,
-  const SLMap& sym_no, const vector<string>& no_th, bool scores) {
+  const SLMap& sym_no, const vector<string>& no_th, bool scores,
+  TypeTable* types) {
   p->learn_all();
   cerr << "Learning done; awaiting your features ..." << endl;
 
   string line;
   while (getline(cin, line)) {
-    const LDPairVec query = parse_feature_list(line.begin(), line.end(), sym_no);
     long no_adv = min((long)no_th.size(), predno);
-    const LDPairVec ans = p->predict_weighted(query, no_th.size(), no_adv);
+    const LDPairVec ans = types
+      ? static_cast<MePo&>(*p).predict_typed(
+          parse_typed_query(line.begin(), line.end(), sym_no, *types),
+          no_th.size(), no_adv)
+      : p->predict_weighted(
+          parse_feature_list(line.begin(), line.end(), sym_no),
+          no_th.size(), no_adv);
     print_prediction(ans, no_adv, no_th, scores);
   }
 }
@@ -153,6 +161,7 @@ int main(int argc, char* argv[]) {
 
   // MePo specific options
   string staturesf;
+  bool typed_mepo = false;
 
   // k-NN specific options
   bool credit_deps = true;
@@ -165,7 +174,7 @@ int main(int argc, char* argv[]) {
 
   int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "hc:d:e:F:n:p:k:St:T:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "hc:d:e:F:n:p:Pk:St:T:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
@@ -206,6 +215,9 @@ int main(int argc, char* argv[]) {
       case 'p':
         method = optarg;
         break;
+      case 'P':
+        typed_mepo = true;
+        break;
       case 'S':
         scores = true;
         break;
@@ -234,6 +246,11 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
+  if (typed_mepo && (method != "mepo" || !evalf.empty())) {
+    cerr << "Error: -P works only with -p mepo, and not with -e!\n";
+    return EXIT_FAILURE;
+  }
+
   long sym_num = 0;
   SLMap th_no,           // maps a theorem to its numeric identifier
         sym_no;          // maps a  symbol to its numeric identifier
@@ -249,7 +266,10 @@ int main(int argc, char* argv[]) {
   syms  = LVecVec(no_th.size(), vector<long>(0));
 
   read_deps(depsf, th_no, deps);
-  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym);
+  TypeTable types;
+  TypedSyms typed(typed_mepo ? no_th.size() : 0);
+  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
+    typed_mepo ? &types : nullptr, &typed);
 
   vector<unsigned char> statures(no_th.size(), 0);
   if (!staturesf.empty())
@@ -263,7 +283,8 @@ int main(int argc, char* argv[]) {
   if (method == "knn")
     predictor.reset(new kNN(deps, syms, sym_ths, sym_num, credit_deps));
   else if (method == "mepo")
-    predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures));
+    predictor.reset(new MePo(deps, syms, sym_ths, sym_num, statures,
+      typed_mepo ? &types : nullptr, typed_mepo ? &typed : nullptr));
   else if (method == "mepo-cosine")
     predictor.reset(new MePoCosine(deps, syms, sym_ths, sym_num));
   else if (method == "nbayes" || method == "nbayes-dense")
@@ -292,7 +313,8 @@ int main(int argc, char* argv[]) {
 
   // if user did not supply evaluation file
   if (evalf == "")
-    interaction(predictor, predno, sym_no, no_th, scores);
+    interaction(predictor, predno, sym_no, no_th, scores,
+      typed_mepo ? &types : nullptr);
   else
     evaluation(predictor, evalf, predno, th_no, no_th, scores);
 
