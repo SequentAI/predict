@@ -100,7 +100,7 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
   else
     for (const auto& ft : terms)
       for (const auto i : sym_ths[ft.first])
-        if (i < maxth) ans[i].second += ft.second;
+        if (visible(i, maxth)) ans[i].second += ft.second;
 
   for (long i = 0; i < maxth; ++i) {
     const double n2 = dense ? norm2(i) : norms2[i];
@@ -110,6 +110,6 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
       ans[i].second = 0;
   }
 
-  sort_prediction(ans, no_adv);
+  sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
 }

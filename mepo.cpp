@@ -340,7 +340,7 @@ LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
   if (query.empty()) {
     rel.assign(nsyms, {});
     for (long i = 0; i < maxth; ++i)
-      if (statures[i] & STATURE_LOCAL)
+      if (visible(i, maxth) && (statures[i] & STATURE_LOCAL))
         for (const auto& ts : (*typed)[i]) add(rel[ts.sym], ts.ptype);
   }
 
@@ -364,10 +364,10 @@ LDPairVec MePo::filter(long maxth, long no_adv, Weigh weigh,
   vector<char> status(maxth, HOPEFUL);
   vector<double> weight(maxth, 0);
   vector<char> cached(maxth, 0);
-  // facts without symbols are never considered
+  // facts without symbols, or out of scope, are never considered
   vector<long> hopeful;
   for (long i = 0; i < maxth; ++i)
-    if (syms[i].empty()) status[i] = DROPPED;
+    if (syms[i].empty() || !visible(i, maxth)) status[i] = DROPPED;
     else hopeful.push_back(i);
 
   LVec accepted;
@@ -428,7 +428,7 @@ LDPairVec MePo::filter(long maxth, long no_adv, Weigh weigh,
       hopeful.push_back(candidates[c].first);
     for (const auto s : fresh)
       for (const auto i : sym_ths[s])
-        if (i < maxth) {
+        if (visible(i, maxth)) {
           cached[i] = 0;
           if (status[i] == HOPELESS) {
             status[i] = HOPEFUL;
@@ -446,10 +446,11 @@ LDPairVec MePo::filter(long maxth, long no_adv, Weigh weigh,
   for (const auto i : accepted) ans.push_back(make_pair(i, weight[i]));
   const long nacc = ans.size();
   for (long i = 0; i < maxth; ++i)
-    if (status[i] != ACCEPTED)
+    if (status[i] != ACCEPTED && visible(i, maxth))
       ans.push_back(make_pair(i,
         syms[i].empty() ? 0.0 : weigh(i)));
   partial_sort(ans.begin() + nacc,
-    ans.begin() + max(nacc, min(no_adv, maxth)), ans.end(), sortfun);
+    ans.begin() + max(nacc, min(no_adv, (long)ans.size())), ans.end(),
+    sortfun);
   return ans;
 }

@@ -1,3 +1,6 @@
+#ifndef MESH_CPP
+#define MESH_CPP
+
 #include "knn.cpp"
 #include "mepo.cpp"
 #include "nbayes.cpp"
@@ -25,7 +28,8 @@ LVec first_ids(const Predictor& p, const LDPairVec& query, long maxth,
   n = min(n, maxth);
   const LDPairVec ans = p.predict_weighted(query, maxth, n);
   LVec ids;
-  for (long j = 0; j < n; ++j) ids.push_back(ans[j].first);
+  for (long j = 0; j < min(n, (long)ans.size()); ++j)
+    ids.push_back(ans[j].first);
   return ids;
 }
 
@@ -35,6 +39,7 @@ LVec first_ids(const Predictor& p, const LDPairVec& query, long maxth,
 // over the legs it is in, of its weight times the leg's. Isabelle averages
 // the sum over the legs and rounds it to a multiple of 1e-8, which can only
 // make nearly equal scores equal; here, equal scores come in <seq> order.
+// Unsorted: the caller drops the theorems out of scope, then sorts.
 LDPairVec mesh_facts(const vector<Leg>& legs, long maxth, long max_facts) {
   LDPairVec ans(maxth);
   for (long i = 0; i < maxth; ++i) ans[i] = make_pair(i, 0.0);
@@ -54,7 +59,6 @@ LDPairVec mesh_facts(const vector<Leg>& legs, long maxth, long max_facts) {
   // the others rank after the candidates
   for (long i = 0; i < maxth; ++i)
     if (!candidate[i]) ans[i].second = 0;
-  sort_prediction(ans, min(max_facts, maxth));
   return ans;
 }
 
@@ -69,6 +73,7 @@ class MaSh : public Predictor {
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
+    void set_scope(const vector<char>* scope);
 
   private:
     kNN knn;
@@ -86,6 +91,12 @@ void MaSh::learn(long from, long to) {
   nbayes.learn(from, to);
 }
 
+void MaSh::set_scope(const vector<char>* scope) {
+  Predictor::set_scope(scope);
+  knn.set_scope(scope);
+  nbayes.set_scope(scope);
+}
+
 LDPairVec MaSh::predict(const LVec& csyms, long maxth, long no_adv) const {
   LDPairVec query;
   for (const auto s : csyms) query.push_back(make_pair(s, 1.0));
@@ -94,9 +105,11 @@ LDPairVec MaSh::predict(const LVec& csyms, long maxth, long no_adv) const {
 
 LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
-  return mesh_facts({{0.5, first_ids(nbayes, query, maxth, no_adv)},
-                     {0.5, first_ids(knn, query, maxth, no_adv)}},
+  LDPairVec ans = mesh_facts({{0.5, first_ids(nbayes, query, maxth, no_adv)},
+                              {0.5, first_ids(knn, query, maxth, no_adv)}},
     maxth, no_adv);
+  sort_prediction(ans, keep_visible(ans, no_adv));
+  return ans;
 }
 
 // MePo and MaSh, weighted 0.5 each (Isabelle's relevant_facts). For M
@@ -112,6 +125,7 @@ class MeSh : public Predictor {
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
+    void set_scope(const vector<char>* scope);
 
   private:
     MePo mepo;
@@ -131,6 +145,12 @@ void MeSh::learn(long from, long to) {
   mash.learn(from, to);
 }
 
+void MeSh::set_scope(const vector<char>* scope) {
+  Predictor::set_scope(scope);
+  mepo.set_scope(scope);
+  mash.set_scope(scope);
+}
+
 LDPairVec MeSh::predict(const LVec& csyms, long maxth, long no_adv) const {
   LDPairVec query;
   for (const auto s : csyms) query.push_back(make_pair(s, 1.0));
@@ -141,7 +161,11 @@ LDPairVec MeSh::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
   const long n_mepo = over ? no_adv * 51 / 50 : no_adv;
   const long n_mash = over ? no_adv * 51 / 50 : 2 * no_adv + 25;
-  return mesh_facts({{0.5, first_ids(mepo, query, maxth, n_mepo)},
-                     {0.5, first_ids(mash, query, maxth, n_mash)}},
+  LDPairVec ans = mesh_facts({{0.5, first_ids(mepo, query, maxth, n_mepo)},
+                              {0.5, first_ids(mash, query, maxth, n_mash)}},
     maxth, no_adv);
+  sort_prediction(ans, keep_visible(ans, no_adv));
+  return ans;
 }
+
+#endif

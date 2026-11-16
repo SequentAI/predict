@@ -160,7 +160,7 @@ LDPairVec RandomForest::predict(const LVec& csyms, long maxth, long no_adv)
   for (const auto& label : labels) {
     // this might be the case if we use a prelearned tree, and to prevent
     // suggesting theorems "from the future", we discard them
-    if (label.first >= maxth)
+    if (!visible(label.first, maxth))
       continue;
 
     ans[label.first].second += label.second; // / pow(labels_ti.get(label), 1);
@@ -168,13 +168,13 @@ LDPairVec RandomForest::predict(const LVec& csyms, long maxth, long no_adv)
     const LVec& ds = deps[label.first];
     for (const auto& dep : ds) {
         //cerr << dw / pow(labels_ti.get(dep), 3) << endl;
-      if (dep >= maxth) // a dependency from the future
+      if (!visible(dep, maxth)) // a dependency from the future or out of scope
         continue;
       ans[dep].second += depweight * label.second; // / pow(labels_ti.get(dep), 4);
     }
   }
 
-  sort_prediction(ans, no_adv);
+  sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
 }
 

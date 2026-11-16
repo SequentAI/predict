@@ -46,13 +46,14 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
     const LVec& ths = sym_ths[sym];
     double weight = tfidf.get(sym);
     for (const auto& th : ths) {
-      if (th < maxth) ans[th].second += pow(weight, 6);
+      if (visible(th, maxth)) ans[th].second += pow(weight, 6);
     }
   }
 
   // neighbours[0, sorted) are the best neighbours in order; the loop below
   // usually needs few of them, so they are sorted on demand
   LDPairVec neighbours(ans);
+  const long n_neighbours = keep_visible(neighbours, maxth);
   long sorted = 0;
   for (auto& a : ans) a.second = 0;
 
@@ -69,9 +70,9 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
   // and decreases when k increases.
 
   long no_recommends = 0;
-  for (long k = 0; k < maxth && no_recommends < no_adv; ++k) {
+  for (long k = 0; k < n_neighbours && no_recommends < no_adv; ++k) {
     if (k == sorted) {
-      sorted = min(maxth, max(2 * sorted, no_adv));
+      sorted = min(n_neighbours, max(2 * sorted, no_adv));
       partial_sort(neighbours.begin() + k, neighbours.begin() + sorted,
         neighbours.end(), sortfun);
     }
@@ -90,7 +91,7 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
     if (!credit_deps || ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
-      if (d < maxth) { // in case of future dependencies, do not predict them
+      if (visible(d, maxth)) { // in case of future dependencies, do not predict them
         if (ans[d].second <= 0) {
           no_recommends++;
           ans[d].second = age(k) + ol;
@@ -101,6 +102,6 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
     }
   }
 
-  sort_prediction(ans, no_adv);
+  sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
 }
