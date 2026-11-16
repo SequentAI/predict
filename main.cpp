@@ -6,9 +6,10 @@
 #include "mepo_cosine.cpp"
 #include "mesh.cpp"
 #include "rforest.cpp"
+#include "snapshot.cpp"
 
 // Raise with every change to rankings, options or formats.
-const string version_str = "0.6.0";
+const string version_str = "0.7.0";
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -26,6 +27,10 @@ const string usage_str =
   "  -S           print each prediction's score after it, in parentheses\n"
   "  -x <path>    eXport learned predictor data to path\n"
   "  -y <path>    Ymport learned predictor data from path\n"
+  "  -o <file>    write the corpus to a snapshot file and stop\n"
+  "  -i <file>    start from the corpus in a snapshot file; <syms>, <deps> and\n"
+  "               <seq> then give theorems to add after it. Exits with status 3\n"
+  "               if the snapshot cannot be used\n"
   "\n"
   "Predictor-specific options:\n"
   " k-NN (also in MaSh and MeSh):\n"
@@ -66,7 +71,7 @@ void print_prediction(LDPairVec prediction, long n_predictions,
 
 // With [types], [p] is a MePo over typed symbols.
 void interaction(unique_ptr<Predictor>& p, long predno,
-  const SLMap& sym_no, const vector<string>& no_th, bool scores,
+  const HLMap& sym_no, const vector<string>& no_th, bool scores,
   TypeTable* types) {
   p->learn_all();
   cerr << "Learning done; awaiting your features ..." << endl;
@@ -149,6 +154,8 @@ int main(int argc, char* argv[]) {
   string method = "knn";
   // path to prelearned predictor data
   string import_path, export_path;
+  // snapshot files to start from and to write
+  string snapshot_in, snapshot_out;
 
   // Random Forest specific options
   long n_trees = 512;
@@ -174,7 +181,7 @@ int main(int argc, char* argv[]) {
 
   int c;
   optind = MIN_ARGS + 1;  // start getopt after obligatory arguments
-  while ((c = getopt (argc, argv, "hc:d:e:F:n:p:Pk:St:T:s:f:w:x:y:")) != -1)
+  while ((c = getopt (argc, argv, "hc:d:e:F:i:n:o:p:Pk:St:T:s:f:w:x:y:")) != -1)
     switch (c) {
       case 'h':
         cout << usage_str;
@@ -208,6 +215,12 @@ int main(int argc, char* argv[]) {
         break;
       case 'F':
         staturesf = optarg;
+        break;
+      case 'i':
+        snapshot_in = optarg;
+        break;
+      case 'o':
+        snapshot_out = optarg;
         break;
       case 'n':
         predno = atoi_check(optarg, "number of predictions");
@@ -250,20 +263,40 @@ int main(int argc, char* argv[]) {
     cerr << "Error: -P works only with -p mepo, and not with -e!\n";
     return EXIT_FAILURE;
   }
+  if (typed_mepo && !(snapshot_in.empty() && snapshot_out.empty())) {
+    cerr << "Error: -P does not work with snapshots!\n";
+    return EXIT_FAILURE;
+  }
+  // exported trees name their features, which a snapshot does not hold
+  if (!export_path.empty() && !snapshot_in.empty()) {
+    cerr << "Error: -x does not work with -i!\n";
+    return EXIT_FAILURE;
+  }
 
   long sym_num = 0;
-  SLMap th_no,           // maps a theorem to its numeric identifier
-        sym_no;          // maps a  symbol to its numeric identifier
+  SLMap th_no;           // maps a theorem to its numeric identifier
+  HLMap sym_no;          // maps a symbol's hash to its numeric identifier
   vector<string> no_th,  // theorem name table
                  no_sym;
   LVecVec deps,          // dependencies of each theorem
           syms,          // syms[t] holds the symbols of a theorem t
           sym_ths;       // sym_ths[s] holds the theorems which contain s
 
+  Corpus corpus{no_th, no_sym, th_no, sym_no, deps, syms, sym_ths};
+  if (!snapshot_in.empty()) {
+    const string why = read_snapshot(snapshot_in, version_str, corpus);
+    if (!why.empty()) {
+      cerr << "Error: cannot use snapshot `" << snapshot_in << "': " << why
+           << "!\n";
+      return 3;
+    }
+    sym_num = no_sym.size();
+  }
+
   read_order(seqf, th_no, no_th);
 
-  deps  = LVecVec(no_th.size(), vector<long>(0));
-  syms  = LVecVec(no_th.size(), vector<long>(0));
+  deps.resize(no_th.size());
+  syms.resize(no_th.size());
 
   read_deps(depsf, th_no, deps);
   TypeTable types;
@@ -271,6 +304,11 @@ int main(int argc, char* argv[]) {
     freq_only(typed_mepo ? no_th.size() : 0);
   read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
     typed_mepo ? &types : nullptr, &typed, &freq_only);
+
+  if (!snapshot_out.empty()) {
+    write_snapshot(snapshot_out, version_str, corpus);
+    return EXIT_SUCCESS;
+  }
 
   vector<unsigned char> statures(no_th.size(), 0);
   if (!staturesf.empty())

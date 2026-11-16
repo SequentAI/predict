@@ -30,7 +30,7 @@ build from a source archive still says what it is.
 ## Usage
 
 ```
-predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>] [-P]
+predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>] [-P] [-i <snapshot>] [-o <snapshot>]
 ```
 
 `predict` learns every theorem of `<seq>`, then reads one query per line on
@@ -42,6 +42,32 @@ for all options.
 With `-e <eval>`, a file of theorem ids, one per line, `predict` instead
 predicts for each of those theorems from its own features, having learned
 only the theorems before it in `<seq>`, and prints `id:` before its line.
+
+### Snapshots
+
+Reading the text files takes most of `predict`'s start-up time. With
+`-o <snapshot>`, `predict` reads the corpus, writes it to the file
+`<snapshot>` in a binary form, and stops. With `-i <snapshot>`, it starts
+from that corpus instead, and `<syms>`, `<deps>` and `<seq>` hold theorems to
+add after it (empty files add none): every method then ranks as it would
+from the text files the snapshot was written from, followed by the added
+theorems' lines. The one exception is a dependency of a snapshot's theorem
+on a theorem added after it, which the snapshot dropped when it was written,
+as `<deps>` drops one missing from `<seq>`. `-i` and `-o` together write the
+corpus with the added theorems to a new snapshot. Neither works with `-P`.
+
+A snapshot holds the theorem names, the features' hashes (below) and the
+numbers `predict` gives theorems and features, and nothing learned: learning
+is fast next to reading. It can be read only by the version of `predict` that
+wrote it. If the snapshot was written by another version, is truncated, or is
+not a snapshot, `predict` says why on standard error and exits with status 3
+before reading anything else, so that a caller can fall back to the text
+files. Since a snapshot holds no feature names, `rforest` cannot export its
+trees (`-x`) from one.
+
+`predict` knows a feature by the 64-bit FNV-1a hash of its text, so two
+features whose texts hash alike count as one; for a million distinct
+features, the chance that any two do is about 3 in 100 million.
 
 ## Input formats
 
@@ -278,6 +304,8 @@ scores equal.
   match symbols by their types.
 - `knn` sorts only as many neighbours as it needs.
 - `-S` prints scores; `--version` prints the version.
+- `-o` and `-i` write and read snapshots of the corpus, and features are
+  known by a hash of their text.
 
 ## Provenance and licence
 

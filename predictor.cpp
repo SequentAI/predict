@@ -21,7 +21,7 @@ class Predictor {
     virtual LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
 
-    void set_tables(SVec no_th, SVec no_sym, SLMap th_no, SLMap sym_no);
+    void set_tables(SVec no_th, SVec no_sym, SLMap th_no, HLMap sym_no);
 
     virtual void import_data(string location) {}
     virtual void export_data(string location) const {}
@@ -33,8 +33,8 @@ class Predictor {
 
     SVec no_th,
          no_sym;
-    SLMap  th_no,
-          sym_no;
+    SLMap th_no;
+    HLMap sym_no;
 
   private:
     void print_answer(long no_adv);
@@ -59,7 +59,7 @@ LDPairVec Predictor::predict(long i, long maxth, long n_predictions) {
   return predict(syms[i], maxth, n_predictions);
 }
 
-void Predictor::set_tables(SVec no_th, SVec no_sym, SLMap th_no, SLMap sym_no) {
+void Predictor::set_tables(SVec no_th, SVec no_sym, SLMap th_no, HLMap sym_no) {
   this->no_th  = no_th;
   this->no_sym = no_sym;
   this->th_no  = th_no;

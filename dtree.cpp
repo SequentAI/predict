@@ -19,7 +19,7 @@ class DecisionTree {
     DecisionTree(LVec labels = LVec()) : labels(labels) {}
     DecisionTree(DecisionTree *left, DecisionTree *right, long feature)
       : left(left), right(right), feature(feature) {}
-    DecisionTree(string filename, const SLMap& th_no, const SLMap& sym_no);
+    DecisionTree(string filename, const SLMap& th_no, const HLMap& sym_no);
 
     ~DecisionTree() { delete left; delete right; }
 
@@ -75,7 +75,7 @@ void DecisionTree::query(const LVec& features, LDMap& result, double weight = 1.
 }
 
 DecisionTree::DecisionTree(string filename,
-  const SLMap& th_no, const SLMap& sym_no) : DecisionTree() {
+  const SLMap& th_no, const HLMap& sym_no) : DecisionTree() {
 
   ifstream f(filename);
 
@@ -128,7 +128,7 @@ DecisionTree::DecisionTree(string filename,
         const string name_str = read_quoted(name_begin, line.end());
 
         if (is_feature) {
-          auto sym = sym_no.find(name_str);
+          auto sym = sym_no.find(feature_hash(name_str));
           if (sym == sym_no.end())
             exit_error("Could not find feature `" + name_str + "'");
           else
