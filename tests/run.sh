@@ -1016,6 +1016,11 @@ done
 if [ -z "$msg" ]; then
   run none -i "$WORK/lists.snap" -p mepo -P -n 1 <<<'' >/dev/null && msg="-P accepted with -i"
 fi
+if [ -z "$msg" ]; then
+  mkdir -p "$WORK/snaptrees"
+  run none -i "$WORK/lists.snap" -p rforest -t 1 -x "$WORK/snaptrees" -n 1 <<<'' >/dev/null &&
+    msg="-x accepted with -i"
+fi
 if [ -n "$msg" ]; then fail "snapshot refused" "$msg"; else ok "snapshot refused"; fi
 
 [ $failures -eq 0 ]

@@ -56,14 +56,18 @@ on a theorem added after it, which the snapshot dropped when it was written,
 as `<deps>` drops one missing from `<seq>`. `-i` and `-o` together write the
 corpus with the added theorems to a new snapshot. Neither works with `-P`.
 
-A snapshot holds the names and the numbers `predict` gives theorems and
-features, in the byte order of the machine that wrote it, and nothing
-learned: learning is fast next to reading. It can be read only by the
-version of `predict` that wrote it. If the snapshot was written by another
-version or on a machine of another byte order, is truncated, or is not a
-snapshot, `predict` says why on standard error and exits with status 3
+A snapshot holds the theorem names, the features' hashes (below) and the
+numbers `predict` gives theorems and features, and nothing learned: learning
+is fast next to reading. It can be read only by the version of `predict` that
+wrote it. If the snapshot was written by another version, is truncated, or is
+not a snapshot, `predict` says why on standard error and exits with status 3
 before reading anything else, so that a caller can fall back to the text
-files.
+files. Since a snapshot holds no feature names, `rforest` cannot export its
+trees (`-x`) from one.
+
+`predict` knows a feature by the 64-bit FNV-1a hash of its text, so two
+features whose texts hash alike count as one; for a million distinct
+features, the chance that any two do is about 3 in 100 million.
 
 ## Input formats
 
@@ -300,7 +304,8 @@ scores equal.
   match symbols by their types.
 - `knn` sorts only as many neighbours as it needs.
 - `-S` prints scores; `--version` prints the version.
-- `-o` and `-i` write and read snapshots of the corpus.
+- `-o` and `-i` write and read snapshots of the corpus, and features are
+  known by a hash of their text.
 
 ## Provenance and licence
 

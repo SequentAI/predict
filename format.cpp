@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cerrno>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -22,6 +23,18 @@ typedef vector<long> LVec;
 typedef vector<vector<long> > LVecVec;
 typedef vector<pair<long, double> > LDPairVec;
 typedef unordered_map<long, double> LDMap;
+typedef unordered_map<uint64_t, long> HLMap;
+
+/* Features are looked up by a 64-bit hash of their text (FNV-1a), so that a
+   snapshot need not hold the text; features with equal hashes are one. */
+uint64_t feature_hash(const string &f) {
+  uint64_t h = 0xcbf29ce484222325ULL;
+  for (const unsigned char c : f) {
+    h ^= c;
+    h *= 0x100000001b3ULL;
+  }
+  return h;
+}
 
 void exit_error(string message) {
   cerr << message << endl;
@@ -394,7 +407,7 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
 // theorems. Without [types], frequency-only tokens are ignored.
 void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
                long &sym_num, const SLMap &th_no,
-               SLMap &sym_no, SVec& no_sym,
+               HLMap &sym_no, SVec& no_sym,
                TypeTable *types = nullptr, TypedSyms *typed = nullptr,
                TypedSyms *freq_only = nullptr) {
   ifstream ic(fname);
@@ -413,14 +426,15 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
     unordered_set<long> seen;
     for (const auto& t : parse_string_list(line.begin() + pos + 1, line.end(), false)) {
       const string& f = t.feature;
-      auto ftr_got = sym_no.find(f);
+      const uint64_t fh = feature_hash(f);
+      auto ftr_got = sym_no.find(fh);
       if (t.freq_only) {
         if (!types) continue;
         long s;
         if (ftr_got == sym_no.end()) {
           s = sym_num;
           sym_ths.push_back(vector<long>());
-          sym_no[f] = sym_num++;
+          sym_no[fh] = sym_num++;
           no_sym.push_back(f);
         }
         else s = ftr_got->second;
@@ -435,7 +449,7 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
         seen.insert(sym_num);
 
         // register new feature
-        sym_no[f] = sym_num++;
+        sym_no[fh] = sym_num++;
         no_sym.push_back(f);
       }
       else {
@@ -454,11 +468,11 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
 // features. A feature repeated in the query counts once, with its largest
 // weight.
 LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
-  const SLMap& ftr_no) {
+  const HLMap& ftr_no) {
   LDPairVec result;
   unordered_map<long, size_t> index;
   for (const auto& t : parse_string_list(begin, end, true)) {
-    auto got = ftr_no.find(t.feature);
+    auto got = ftr_no.find(feature_hash(t.feature));
     if (got == ftr_no.end())
       continue;
     auto seen = index.find(got->second);
@@ -476,10 +490,10 @@ LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
 // Parses a query line into typed symbols, dropping unknown features. A
 // feature repeated with an equal type counts once, with its largest weight.
 vector<TypedSym> parse_typed_query(string::iterator begin,
-  string::iterator end, const SLMap& ftr_no, TypeTable& types) {
+  string::iterator end, const HLMap& ftr_no, TypeTable& types) {
   vector<TypedSym> result;
   for (const auto& t : parse_string_list(begin, end, true)) {
-    auto got = ftr_no.find(t.feature);
+    auto got = ftr_no.find(feature_hash(t.feature));
     if (got == ftr_no.end())
       continue;
     const TypedSym ts = typed_sym(got->second, t, types);

@@ -71,7 +71,7 @@ void print_prediction(LDPairVec prediction, long n_predictions,
 
 // With [types], [p] is a MePo over typed symbols.
 void interaction(unique_ptr<Predictor>& p, long predno,
-  const SLMap& sym_no, const vector<string>& no_th, bool scores,
+  const HLMap& sym_no, const vector<string>& no_th, bool scores,
   TypeTable* types) {
   p->learn_all();
   cerr << "Learning done; awaiting your features ..." << endl;
@@ -267,10 +267,15 @@ int main(int argc, char* argv[]) {
     cerr << "Error: -P does not work with snapshots!\n";
     return EXIT_FAILURE;
   }
+  // exported trees name their features, which a snapshot does not hold
+  if (!export_path.empty() && !snapshot_in.empty()) {
+    cerr << "Error: -x does not work with -i!\n";
+    return EXIT_FAILURE;
+  }
 
   long sym_num = 0;
-  SLMap th_no,           // maps a theorem to its numeric identifier
-        sym_no;          // maps a  symbol to its numeric identifier
+  SLMap th_no;           // maps a theorem to its numeric identifier
+  HLMap sym_no;          // maps a symbol's hash to its numeric identifier
   vector<string> no_th,  // theorem name table
                  no_sym;
   LVecVec deps,          // dependencies of each theorem
