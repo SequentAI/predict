@@ -1170,6 +1170,16 @@ msg=
 for q in '[before=2]"p"' '[k=0]"p"' '[k=x]"p"' '[size=3]"p"' '[k=2 k=3]"p"' '[exclude=]"p"' '[k=2"p"' '!remove Script' '!add a b c'; do
   run dag -p cosine -L "$WORK/dag.thy" <<<"$q" >/dev/null && { msg="'$q' accepted"; break; }
 done
+for c in "!add $WORK/down.syms $WORK/down.deps $WORK/missing.seq $WORK/down.thy" \
+         "!replace Script $WORK/missing.syms $WORK/new.deps $WORK/new.seq $WORK/new.thy" \
+         "!replace Script $WORK/new.syms $WORK/missing.deps $WORK/new.seq $WORK/new.thy"; do
+  [ -n "$msg" ] && break
+  out=$(run dag -p cosine -L "$WORK/dag.thy" <<<"$c")
+  status=$?
+  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q "Cannot read" "$WORK/stderr"; then
+    msg="'$c' with a missing file: exit status $status, output '$out'"
+  fi
+done
 if [ -z "$msg" ]; then
   run dag -p mepo -P <<<"!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy" >/dev/null &&
     msg="!add accepted with -P"

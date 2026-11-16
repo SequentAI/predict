@@ -94,13 +94,26 @@ struct Session {
   bool growable;
 };
 
-// Adds the theorems of the files named in [args], `<syms> <deps> <seq>
-// <theories>`, after the others.
-void add_theorems(Session& s, const string& args, const string& line) {
+// The four files `<syms> <deps> <seq> <theories>` named in [args], each
+// checked to be readable, so that a command fails before it changes the
+// corpus.
+vector<string> command_files(const string& args, const string& line) {
   istringstream in(args);
-  string symsf, depsf, seqf, theoriesf, rest;
-  if (!(in >> symsf >> depsf >> seqf >> theoriesf) || (in >> rest))
+  vector<string> files(4);
+  string rest;
+  if (!(in >> files[0] >> files[1] >> files[2] >> files[3]) || (in >> rest))
     exit_error("Expected four files in `" + line + "'!");
+  for (const auto& f : files)
+    if (!ifstream(f))
+      exit_error("Cannot read `" + f + "' in `" + line + "'!");
+  return files;
+}
+
+// Adds the theorems of [files], as command_files gives them, after the
+// others.
+void add_theorems(Session& s, const vector<string>& files) {
+  const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
+    &theoriesf = files[3];
   Corpus& c = s.corpus;
   read_order(seqf, c.th_no, c.no_th);
   const long n = c.no_th.size();
@@ -121,16 +134,17 @@ void command(Session& s, const string& line) {
   if (!s.growable)
     exit_error("`" + line + "' does not work with -P, -y or -x!");
   if (line.rfind("!add ", 0) == 0)
-    add_theorems(s, line.substr(5), line);
+    add_theorems(s, command_files(line.substr(5), line));
   else if (line.rfind("!replace ", 0) == 0) {
     const size_t space = line.find(' ', 9);
     const string theory = line.substr(9, space - 9);
     if (!valid_theory(theory) || space == string::npos)
       exit_error("Expected `!replace <theory> <syms> <deps> <seq> "
                  "<theories>', not `" + line + "'!");
+    const vector<string> files = command_files(line.substr(space + 1), line);
     const long t = s.theories.find(theory);
     if (t != -1) remove_theory(s.corpus, s.statures, s.theories, t);
-    add_theorems(s, line.substr(space + 1), line);
+    add_theorems(s, files);
   }
   else
     exit_error("Unknown command `" + line + "'!");

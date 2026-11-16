@@ -235,7 +235,8 @@ corpus, so that a process can follow a library as it is edited:
 them after the others; their ids must be new. `!replace` first removes the
 theorems of `<theory>` (none if it has none), then adds those of the files,
 which are usually the theory's theorems as they now are. Paths are separated
-by single spaces and cannot contain one. A dependency of an earlier theorem on
+by single spaces and cannot contain one. A file that cannot be read is an
+error before the corpus changes. A dependency of an earlier theorem on
 an added one is not read again, so it is missing, as with snapshots
 (`-i`), and `-F`'s flags are only those of the theorems read at start-up.
 `predict` then learns the whole corpus again, so that it ranks as a process
