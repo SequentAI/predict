@@ -912,4 +912,110 @@ if [ -z "$msg" ] && run fo -p mepo -P -n 1 <<<'"k$g"+2' >/dev/null 2>&1; then
 fi
 if [ -n "$msg" ]; then fail "frequency-only tokens" "$msg"; else ok "frequency-only tokens"; fi
 
+# 33. a snapshot ranks as the text corpus it was written from, and so does a
+# snapshot with theorems added after it
+number=33
+corpus none '' '' ''
+# from_snapshot <name> <options...> < query: runs predict on the snapshot
+# $WORK/<name>.snap, with no theorems added
+from_snapshot() {
+  local name=$1
+  shift
+  run none -i "$WORK/$name.snap" "$@"
+}
+LIMIT=600
+msg=
+for name in lists synth ties; do
+  run $name -o "$WORK/$name.snap" || { msg="writing $name.snap: $(head -1 "$WORK/stderr")"; break; }
+done
+for m in knn nbayes mepo mepo-cosine cosine mash mesh; do
+  [ -n "$msg" ] && break
+  for q in "$DATA/lists.queries" "$WORK/lists.wqueries"; do
+    a=$(run lists -p $m -n 16 -S < "$q")
+    b=$(from_snapshot lists -p $m -n 16 -S < "$q")
+    [ -n "$a" ] && [ "$a" = "$b" ] || { msg="$m on $(basename "$q")"; break 2; }
+  done
+done
+if [ -z "$msg" ]; then
+  # ties: equal scores keep <seq> order, also across the cutoff
+  for n in 8 3; do
+    a=$(run ties -p cosine -n $n -S < "$WORK/ties.queries")
+    b=$(from_snapshot ties -p cosine -n $n -S < "$WORK/ties.queries")
+    [ -n "$a" ] && [ "$a" = "$b" ] || { msg="cosine on the ties, -n $n"; break; }
+  done
+fi
+if [ -z "$msg" ]; then
+  a=$(run synth -p cosine -n 5000 -S < "$WORK/synth.all")
+  b=$(from_snapshot synth -p cosine -n 5000 -S < "$WORK/synth.all")
+  [ -n "$a" ] && [ "$a" = "$b" ] || msg="cosine on synth"
+fi
+if [ -z "$msg" ]; then
+  a=$(run synth -p cosine -n 5000 -S -e "$WORK/synth.eval")
+  b=$(from_snapshot synth -p cosine -n 5000 -S -e "$WORK/synth.eval")
+  [ -n "$a" ] && [ "$a" = "$b" ] || msg="cosine on synth with -e"
+fi
+if [ -z "$msg" ]; then
+  # the first 4000 theorems as a snapshot, the other 1000 as text after it;
+  # each theorem has one line in each file, in <seq> order
+  for f in seq syms deps; do
+    head -n 4000 "$WORK/synth.$f" > "$WORK/head.$f"
+    tail -n +4001 "$WORK/synth.$f" > "$WORK/rest.$f"
+  done
+  run head -o "$WORK/head.snap" 2>/dev/null
+  a=$(run synth -p cosine -n 5000 -S < "$WORK/synth.all")
+  b=$(run rest -i "$WORK/head.snap" -p cosine -n 5000 -S < "$WORK/synth.all")
+  [ -n "$a" ] && [ "$a" = "$b" ] || msg="cosine on a snapshot of synth's first 4000 theorems and the rest as text"
+fi
+LIMIT=5
+if [ -n "$msg" ]; then fail "snapshot rankings" "rankings differ: $msg"; else ok "snapshot rankings"; fi
+
+# 34. a snapshot from another version, truncated, or not a snapshot at all is
+# refused with exit status 3, and a caller falling back to the text corpus
+# ranks as the text
+number=34
+version=$("$PREDICT" --version | cut -d' ' -f2)
+python3 - "$WORK/lists.snap" "$WORK/old.snap" "$version" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read()
+version = sys.argv[3].encode()
+assert data.count(version) == 1
+open(sys.argv[2], "wb").write(data.replace(version, b"0" * len(version)))
+PY
+size=$(wc -c < "$WORK/lists.snap")
+head -c $((size - 1)) "$WORK/lists.snap" > "$WORK/short.snap"
+head -c $((size / 2)) "$WORK/lists.snap" > "$WORK/half.snap"
+head -c 30 "$WORK/lists.snap" > "$WORK/head30.snap"
+# caller <snapshot> < query: ranks from the snapshot, or from the text corpus
+# if predict refuses it
+caller() {
+  local q out status
+  q=$(cat)
+  out=$(from_snapshot "$1" -p cosine -n 16 -S <<<"$q")
+  status=$?
+  if [ $status -eq 3 ]; then run lists -p cosine -n 16 -S <<<"$q"; else printf '%s\n' "$out"; return $status; fi
+}
+want=$(run lists -p cosine -n 16 -S < "$DATA/lists.queries")
+msg=
+for snap in old short half head30 lists.syms; do
+  case $snap in lists.syms) f=$DATA/lists.syms ;; *) f=$WORK/$snap.snap ;; esac
+  out=$(run none -i "$f" -p cosine -n 16 < "$DATA/lists.queries")
+  status=$?
+  if [ $status -ne 3 ] || [ -n "$out" ] || ! grep -q "^Error: cannot use snapshot" "$WORK/stderr"; then
+    msg="$snap: exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+    break
+  fi
+  case $snap in
+    old) grep -q "written by predict 0" "$WORK/stderr" || msg="old: stderr '$(cat "$WORK/stderr")'" ;;
+    short | half | head30) grep -q "truncated" "$WORK/stderr" || msg="$snap: stderr '$(cat "$WORK/stderr")'" ;;
+  esac
+  [ -n "$msg" ] && break
+  cp "$f" "$WORK/fallback.snap"
+  out=$(caller fallback < "$DATA/lists.queries")
+  [ "$out" = "$want" ] || { msg="$snap: the caller's fallback ranks '$out'"; break; }
+done
+if [ -z "$msg" ]; then
+  run none -i "$WORK/lists.snap" -p mepo -P -n 1 <<<'' >/dev/null && msg="-P accepted with -i"
+fi
+if [ -n "$msg" ]; then fail "snapshot refused" "$msg"; else ok "snapshot refused"; fi
+
 [ $failures -eq 0 ]
