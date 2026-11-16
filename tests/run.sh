@@ -1023,4 +1023,161 @@ if [ -z "$msg" ]; then
 fi
 if [ -n "$msg" ]; then fail "snapshot refused" "$msg"; else ok "snapshot refused"; fi
 
+
+# Query scopes. The fixture's theories form a DAG: Mid builds on Base,
+# Script (the querying script) on Mid, and Down on Script; Other is apart,
+# and its theorem Other.o1 is private.
+dag_seq=$'Base.b1\nBase.b2\nBase.t\nMid.m1\nMid.t\nOther.o1\nOther.o2\nScript.s1\nScript.s2\nScript.s3\nDown.d1\nDown.d2\n'
+dag_syms=$'Base.b1:"p", "q"\nBase.b2:"q"\nBase.t:"t"\nMid.m1:"p", "r"\nMid.t:"t"\nOther.o1:"p", "q"\nOther.o2:"r"\nScript.s1:"p"\nScript.s2:"p", "q"\nScript.s3:"p", "q", "r", "u"\nDown.d1:"p", "q"\nDown.d2:"p", "q", "r"\n'
+dag_deps=$'Mid.m1:Base.b1\nScript.s2:Mid.m1 Base.b2\nScript.s3:Script.s1\nDown.d1:Script.s2\nDown.d2:Script.s3 Mid.m1\n'
+corpus dag "$dag_seq" "$dag_syms" "$dag_deps"
+sed 's/^\([A-Za-z]*\)\..*/&:\1/; s/^Other.o1:Other$/& private/' "$WORK/dag.seq" > "$WORK/dag.thy"
+methods="knn nbayes mepo mepo-cosine cosine mash mesh"
+
+# words: reads predict's output and prints its ids sorted, on one line
+words() { tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' '; }
+
+# scoped <query> <expected ids>: for every method, succeeds if the query's
+# predictions are exactly the expected ids, in any order; else sets msg
+scoped() {
+  local m out
+  for m in $methods; do
+    out=$(run dag -p $m -L "$WORK/dag.thy" -n 20 <<<"$1" | words)
+    if [ "$out" != "$(words <<<"$2")" ]; then
+      msg="$m on '$1': '$out'"
+      return 1
+    fi
+  done
+}
+
+# 35. a scope's excluded theories (the cone downstream of the script) are
+# never predicted
+number=35
+msg=
+scoped '[exclude=Down]"p", "q", "r"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o2 Script.s1 Script.s2 Script.s3' &&
+  scoped '[exclude=Script,Down,Nothing]"p"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o2'
+if [ -n "$msg" ]; then fail "scope excludes theories" "$msg"; else ok "scope excludes theories"; fi
+
+# 36. a private theorem is predicted only for a query of its own theory
+number=36
+msg=
+scoped '[theory=Script exclude=Down]"p"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o2 Script.s1 Script.s2 Script.s3' &&
+  scoped '[theory=Other exclude=Down]"p"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o1 Other.o2 Script.s1 Script.s2 Script.s3'
+if [ -n "$msg" ]; then fail "scope hides private theorems" "$msg"; else ok "scope hides private theorems"; fi
+
+# 37. before=n keeps only the first n theorems of the query's theory
+number=37
+msg=
+scoped '[theory=Script before=2 exclude=Down]"p"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o2 Script.s1 Script.s2' &&
+  scoped '[theory=Script before=0 exclude=Down]"p"' 'Base.b1 Base.b2 Base.t Mid.m1 Mid.t Other.o2'
+if [ -n "$msg" ]; then fail "scope cuts the script at before" "$msg"; else ok "scope cuts the script at before"; fi
+
+# 38. the ancestors' boost decides the order of two theorems with equal
+# scores, Base.t and Mid.t, which otherwise come in <seq> order
+number=38
+# first_of <a> <b>: reads predict's output and prints whichever of the ids a
+# and b comes first
+first_of() { tr ' ' '\n' | grep -m 1 -x -e "$1" -e "$2"; }
+msg=
+for m in $methods; do
+  plain=$(run dag -p $m -L "$WORK/dag.thy" <<<'"t"' | first_of Base.t Mid.t)
+  boosted=$(run dag -p $m -L "$WORK/dag.thy" <<<'[ancestors=Mid]"t"' | first_of Base.t Mid.t)
+  unboosted=$(run dag -p $m -L "$WORK/dag.thy" -b 1 <<<'[ancestors=Mid]"t"' | first_of Base.t Mid.t)
+  if [ "$plain $boosted $unboosted" != "Base.t Mid.t Base.t" ]; then
+    msg="$m: first $plain, boosted $boosted, with -b 1 $unboosted"
+    break
+  fi
+done
+if [ -n "$msg" ]; then fail "ancestors boost" "$msg"; else ok "ancestors boost"; fi
+
+# 39. k sets the number of predictions of one query
+number=39
+out=$(run dag -p cosine -L "$WORK/dag.thy" -n 5 <<<$'[k=3]"p"\n"p"\n[k=50]"p"')
+if [ "$(sed -n 1p <<<"$out" | wc -w)" -ne 3 ] || [ "$(sed -n 2p <<<"$out" | wc -w)" -ne 5 ] ||
+   [ "$(sed -n 3p <<<"$out" | wc -w)" -ne 11 ]; then
+  fail "scope k" "got '$out'"
+else
+  ok "scope k"
+fi
+
+# 40. the scope filters before the best k are chosen: with the 100 best
+# theorems out of scope, a query still gets k = 8 in scope
+number=40
+{ for i in $(seq 100); do echo "Hot.h$i"; done; for i in $(seq 20); do echo "Cold.c$i"; done; } > "$WORK/hot.seq"
+{ for i in $(seq 100); do echo "Hot.h$i:\"x\", \"y\""; done; for i in $(seq 20); do echo "Cold.c$i:\"x\", \"z$i\""; done; } > "$WORK/hot.syms"
+: > "$WORK/hot.deps"
+sed 's/^\([A-Za-z]*\)\..*/&:\1/' "$WORK/hot.seq" > "$WORK/hot.thy"
+msg=
+top=$(run hot -p cosine -n 100 <<<'"x", "y"' | tr ' ' '\n' | grep -c '^Hot\.')
+[ "$top" -eq 100 ] || msg="the 100 best of cosine hold $top Hot theorems"
+for m in $methods; do
+  [ -n "$msg" ] && break
+  out=$(run hot -p $m -L "$WORK/hot.thy" <<<'[k=8 exclude=Hot]"x", "y"')
+  [ "$(wc -w <<<"$out")" -eq 8 ] && ! grep -q Hot <<<"$out" || msg="$m: '$out'"
+done
+if [ -n "$msg" ]; then fail "scope filters before selection" "$msg"; else ok "scope filters before selection"; fi
+
+# 41. without a scope, -L changes no ranking
+number=41
+sed 's/.*/&:lists/' "$DATA/lists.seq" > "$WORK/lists.thy"
+msg=
+for m in $methods; do
+  a=$(run lists -p $m -n 16 -S < "$DATA/lists.queries")
+  b=$(run lists -p $m -n 16 -S -L "$WORK/lists.thy" < "$DATA/lists.queries")
+  [ -n "$a" ] && [ "$a" = "$b" ] || { msg="$m"; break; }
+done
+if [ -n "$msg" ]; then fail "-L alone ranks as before" "differ for $msg"; else ok "-L alone ranks as before"; fi
+
+# 42. !add and !replace change the corpus of a running predict: it then ranks
+# as a predict started on the changed corpus. Script.s3 alone has "u", so
+# after it is replaced, "u" is a feature no theorem has.
+number=42
+# part <name> <pattern>: the theorems of the dag fixture matching the grep
+# pattern, as files $WORK/<name>.{seq,syms,deps,thy}
+part() {
+  local f
+  for f in seq syms deps thy; do grep -E "$2" "$WORK/dag.$f" > "$WORK/$1.$f"; done
+}
+part up '^(Base|Mid|Other|Script)\.'
+part down '^Down\.'
+printf 'Script.n1\nScript.n2\n' > "$WORK/new.seq"
+printf 'Script.n1:"p", "v"\nScript.n2:"v"\n' > "$WORK/new.syms"
+printf 'Script.n2:Script.n1 Base.b1\n' > "$WORK/new.deps"
+printf 'Script.n1:Script private\nScript.n2:Script\n' > "$WORK/new.thy"
+part kept '^(Base|Mid|Other|Down)\.'
+for f in seq syms deps thy; do cat "$WORK/new.$f" >> "$WORK/kept.$f"; done
+queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
+msg=
+for m in $methods; do
+  out=$(run up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
+!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy
+$queries
+!replace Script $WORK/new.syms $WORK/new.deps $WORK/new.seq $WORK/new.thy
+$queries")
+  want="$(run up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries")
+12
+$(run dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$queries")
+11
+$(run kept -p $m -L "$WORK/kept.thy" -n 20 -S <<<"$queries")"
+  [ "$out" = "$want" ] || { msg="$m: '$out', not '$want'"; break; }
+done
+if [ -n "$msg" ]; then fail "!add and !replace" "$msg"; else ok "!add and !replace"; fi
+
+# 43. malformed scopes and commands are errors, and commands need a corpus
+# that can change
+number=43
+msg=
+for q in '[before=2]"p"' '[k=0]"p"' '[k=x]"p"' '[size=3]"p"' '[k=2 k=3]"p"' '[exclude=]"p"' '[k=2"p"' '!remove Script' '!add a b c'; do
+  run dag -p cosine -L "$WORK/dag.thy" <<<"$q" >/dev/null && { msg="'$q' accepted"; break; }
+done
+if [ -z "$msg" ]; then
+  run dag -p mepo -P <<<"!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy" >/dev/null &&
+    msg="!add accepted with -P"
+fi
+if [ -z "$msg" ]; then
+  printf 'Base.b1:Base secret\n' > "$WORK/bad.thy"
+  run dag -p cosine -L "$WORK/bad.thy" <<<'"p"' >/dev/null && msg="flag secret accepted"
+fi
+if [ -n "$msg" ]; then fail "bad scopes and commands" "$msg"; else ok "bad scopes and commands"; fi
+
 [ $failures -eq 0 ]

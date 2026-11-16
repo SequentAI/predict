@@ -3,7 +3,7 @@ CXXFLAGS = -O3 -std=c++17 -Wall
 
 SOURCES = main.cpp format.cpp predictor.cpp tfidf.cpp knn.cpp mepo.cpp \
           mepo_cosine.cpp cosine.cpp nbayes.cpp mesh.cpp rforest.cpp dtree.cpp \
-          snapshot.cpp
+          snapshot.cpp scope.cpp
 
 predict: $(SOURCES)
 	$(CXX) $(CXXFLAGS) main.cpp -o $@

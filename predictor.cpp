@@ -26,7 +26,23 @@ class Predictor {
     virtual void import_data(string location) {}
     virtual void export_data(string location) const {}
 
+    // Limits the following predictions to the theorems i with scope[i] set,
+    // or lifts the limit if [scope] is null. Theorems out of scope are
+    // treated as theorems past maxth are: never predicted, never a neighbour
+    // or a source of credit, while the learned statistics stay as they are.
+    virtual void set_scope(const vector<char>* scope) { this->scope = scope; }
+
   protected:
+    // whether a prediction for maxth may include theorem i
+    bool visible(long i, long maxth) const {
+      return i < maxth && (!scope || (*scope)[i]);
+    }
+    // Drops the theorems out of scope from [ans]; returns no_adv, or the
+    // number left if fewer.
+    long keep_visible(LDPairVec& ans, long no_adv) const;
+
+    const vector<char>* scope = nullptr;
+
     LVecVec deps,         // dependencies of each theorem
             syms,         // syms[t] holds the symbols of a theorem t
             sym_ths;      // sym_ths[s] holds the theorems which contain s
@@ -57,6 +73,14 @@ LDPairVec Predictor::predict_weighted(const LDPairVec& query, long maxth,
 
 LDPairVec Predictor::predict(long i, long maxth, long n_predictions) {
   return predict(syms[i], maxth, n_predictions);
+}
+
+long Predictor::keep_visible(LDPairVec& ans, long no_adv) const {
+  if (scope)
+    ans.erase(remove_if(ans.begin(), ans.end(),
+      [&](const pair<long, double>& p) { return !(*scope)[p.first]; }),
+      ans.end());
+  return min(no_adv, (long)ans.size());
 }
 
 void Predictor::set_tables(SVec no_th, SVec no_sym, SLMap th_no, HLMap sym_no) {

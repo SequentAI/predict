@@ -64,23 +64,24 @@ void MePoCosine::learn(long from, long to) {
 
 LDPairVec MePoCosine::predict(const LVec& csyms, long maxth, long no_adv) const {
   // theorem importance matrix
-  LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
+  LDPairVec ans;
   for (long i = 0; i < maxth; ++i)
-    ans[i].first = i;
+    if (visible(i, maxth)) ans.push_back(make_pair(i, 0.0));
+  const long n = ans.size();
 
   LDMap nsyms;
   for (auto s : csyms)
     nsyms[s] = 1.0;
 
   for (long sofar = 0; sofar < no_adv; sofar += mepo_incr) {
-    for (long i = sofar; i < maxth; ++i)
+    for (long i = sofar; i < n; ++i)
       ans[i].second = cosine(nsyms, syms[ans[i].first], tfidf);
 
-    long until = min(sofar + mepo_incr, no_adv);
+    long until = min({sofar + mepo_incr, no_adv, n});
 
-    partial_sort(ans.begin() + sofar, ans.begin() + until, ans.begin() + maxth, sortfun);
+    partial_sort(ans.begin() + sofar, ans.begin() + until, ans.end(), sortfun);
 
-    if (until >= maxth) return ans;
+    if (until >= n) return ans;
 
     for (long i = sofar; i < until; i++)
       for (auto s : syms[ans[i].first])

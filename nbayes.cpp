@@ -140,7 +140,7 @@ LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
       ans[i].second = score(i, symh);
     }
 
-    sort_prediction(ans, no_adv);
+    sort_prediction(ans, keep_visible(ans, no_adv));
     return ans;
   }
 
@@ -158,11 +158,12 @@ LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
       const Posting& post = postings[p];
       if (post.i >= maxth)
         break;
-      ans[post.i].second += w * post.a - post.b;
+      if (visible(post.i, maxth))
+        ans[post.i].second += w * post.a - post.b;
     }
   }
 
-  settle(ans, query, no_adv, c);
+  settle(ans, query, keep_visible(ans, no_adv), c);
   return ans;
 }
 

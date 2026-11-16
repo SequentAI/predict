@@ -30,7 +30,7 @@ build from a source archive still says what it is.
 ## Usage
 
 ```
-predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>] [-P] [-i <snapshot>] [-o <snapshot>]
+predict <syms> <deps> <seq> [-p knn|mepo|mepo-cosine|nbayes|cosine|mash|mesh|rforest] [-n N] [-S] [-e <eval>] [-F <statures>] [-P] [-i <snapshot>] [-o <snapshot>] [-L <theories>] [-b <boost>]
 ```
 
 `predict` learns every theorem of `<seq>`, then reads one query per line on
@@ -160,6 +160,89 @@ A flag is `simp` (the theorem is a simplification rule) or `local` (it is
 local to the goal's theory, for instance proved earlier in the same file).
 Ids are written as in `<deps>`. Theorems without a line, and every theorem
 when `-F` is not given, have no flag.
+
+### Query scopes
+
+A library's theories form a dependency DAG, and a goal in one theory may use
+only part of the library: not the theories that build on its own (the
+downstream cone, which would make a cycle), not its own theory's theorems
+proved after the goal, and not the private theorems of other theories. When
+one `predict` process serves goals from many theories, filtering its top `N`
+afterwards can leave few or none of them usable, if the best-scoring
+theorems are out of reach. A scope makes `predict` choose its predictions
+among the usable theorems only, as Isabelle's MaSh does when it selects the
+visible facts before ranking (`select_fact_idxs` in
+`src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML`).
+
+Scopes need each theorem's theory, given with `-L <theories>`:
+
+```
+id:theory
+id:theory private
+```
+
+Ids are written as in `<deps>`. A theory name is nonempty and has no space,
+comma or `]`. A `private` theorem may be predicted only for a query of its
+own theory. Theorems without a line have no theory, and every scope lets
+them be predicted.
+
+A query line may begin with a scope in square brackets, before its features:
+
+```
+[k=8 theory=T before=3 exclude=D1,D2 ancestors=A1,A2]"feature1", "feature2"@0.5
+```
+
+Each key may appear once, in any order, and each may be left out:
+
+- `k=n`: the number of predictions for this query (at least 1), instead of
+  `-n`'s.
+- `theory=T`: the query's own theory. Its private theorems may be predicted.
+- `before=n`: only the first `n` theorems of `T`, in corpus order, may be
+  predicted (all if left out), so that a goal sees only the theorems proved
+  before it. Needs `theory`.
+- `exclude=D1,D2`: the theorems of these theories are never predicted;
+  meant for the theories that depend on `T`.
+- `ancestors=A1,A2`: the theorems of these theories are boosted. The first
+  `max(k, 128)` theorems in scope are ranked again by the weight
+  `0.62 ^ log2(r + 1)` of their rank `r` (from 0), as `mash` and `mesh` weigh
+  ranks, multiplied by `-b`'s factor (default 4) for theorems of these
+  theories; equal weights keep their order. The first `k` of them are
+  printed, with `-S` each with the score it had before.
+
+Theories no theorem has may be named. A query with a scope (even `[]`) never
+predicts private theorems of theories other than its `theory`. A query
+without one ranks as it does without `-L`.
+
+A theorem out of scope is treated as the `-e` mode treats the theorems after
+the goal: it is never predicted, `knn` never takes it as a neighbour, and
+nothing credits its dependencies. Unlike in the `-e` mode, the statistics
+stay those learned from the whole corpus: the IDF of each feature, `nbayes`'s
+dependency counts and `mepo`'s symbol frequencies count every theorem, in
+scope or not. The rankings of a query without a scope, and of the `-e` mode,
+are as without scopes.
+
+### Changing the corpus
+
+In interactive mode, a line starting with `!` is a command that changes the
+corpus, so that a process can follow a library as it is edited:
+
+```
+!add <syms> <deps> <seq> <theories>
+!replace <theory> <syms> <deps> <seq> <theories>
+```
+
+`!add` reads theorems from the four files, in the formats above, and adds
+them after the others; their ids must be new. `!replace` first removes the
+theorems of `<theory>` (none if it has none), then adds those of the files,
+which are usually the theory's theorems as they now are. Paths are separated
+by single spaces and cannot contain one. A dependency of an earlier theorem on
+an added one is not read again, so it is missing, as with snapshots
+(`-i`), and `-F`'s flags are only those of the theorems read at start-up.
+`predict` then learns the whole corpus again, so that it ranks as a process
+started on the changed corpus would, up to rounding (features may be
+numbered otherwise, which changes the order of some sums), and prints the
+number of theorems in the corpus. Commands work neither with `-P` nor with
+`-x` or `-y`.
 
 ## Methods
 
@@ -306,6 +389,8 @@ scores equal.
 - `-S` prints scores; `--version` prints the version.
 - `-o` and `-i` write and read snapshots of the corpus, and features are
   known by a hash of their text.
+- Queries may carry scopes (`-L`, `-b`), and `!add` and `!replace` change the
+  corpus of a running process.
 
 ## Provenance and licence
 
