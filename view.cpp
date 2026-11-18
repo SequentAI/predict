@@ -52,12 +52,12 @@ struct View {
   // the number in the view of each version's first theorem, then the number
   // of theorems
   LVec first;
-  // The number a process started on the view's theorems would give each
-  // feature: features in the order their <syms> first name them; -1 for
-  // features no theorem of the view has. Selectors add up a theorem's
-  // features in this order, as that process would, so that the sums round
-  // alike.
-  LVec rank;
+  // (f, r) for each feature f of the view's theorems, by f, where r is the
+  // number a process started on the view's theorems would give f: features
+  // numbered from 0 in the order their <syms> first name them. Selectors
+  // number the view's statistics by rank and add up a theorem's features in
+  // rank order, as that process would, so that the sums round alike.
+  vector<pair<long, long> > ranks;
   unique_ptr<ViewPredictor> predictor;
 
   long size() const { return first.back(); }
@@ -69,24 +69,41 @@ struct View {
     return make_pair(versions[v], i - first[v]);
   }
 
-  // whether a theorem of the view has feature f
-  bool has(long f) const { return f < (long)rank.size() && rank[f] >= 0; }
+  // the number of features of the view's theorems
+  long features() const { return ranks.size(); }
 
-  // Sets versions, first and rank from chosen, for the sym_num features of
-  // the process.
+  // the rank of feature f, -1 if no theorem of the view has it
+  long rank_of(long f) const {
+    auto got = lower_bound(ranks.begin(), ranks.end(), make_pair(f, -1L));
+    return got != ranks.end() && got->first == f ? got->second : -1;
+  }
+
+  // the rank of each feature numbered below sym_num, -1 for features no
+  // theorem of the view has: a table for learning, kept no longer
+  LVec rank_table(long sym_num) const {
+    LVec table(sym_num, -1);
+    for (const auto& fr : ranks) table[fr.first] = fr.second;
+    return table;
+  }
+
+  // Sets versions, first and ranks from chosen, for the sym_num features of
+  // the versions.
   void arrange(long sym_num) {
     versions.clear();
     for (const auto& c : chosen) versions.push_back(c.second);
     sort(versions.begin(), versions.end(),
       [](const Version* a, const Version* b) { return a->serial < b->serial; });
     first.assign(1, 0);
-    rank.assign(sym_num, -1);
+    LVec table(sym_num, -1);
     long next = 0;
     for (const auto v : versions) {
       first.push_back(first.back() + v->ids.size());
       for (const auto f : v->appearance)
-        if (rank[f] < 0) rank[f] = next++;
+        if (table[f] < 0) table[f] = next++;
     }
+    ranks.clear();
+    for (long f = 0; f < sym_num; ++f)
+      if (table[f] >= 0) ranks.push_back(make_pair(f, table[f]));
   }
 };
 

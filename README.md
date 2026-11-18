@@ -214,8 +214,9 @@ Each key may appear once, in any order, and each may be left out:
   theories; equal weights keep their order. The first `k` of them are
   printed, with `-S` each with the score it had before.
 
-Theories no theorem has may be named. A query with a scope (even `[]`) never
-predicts private theorems of theories other than its `theory`. A query
+Theories no theorem has may be named. A query with a scope (even `[]`, but
+not `[view=V]` alone, below) never predicts private theorems of theories
+other than its `theory`. A query
 without one ranks as it does without `-L`.
 
 A theorem out of scope is treated as the `-e` mode treats the theorems after
@@ -299,8 +300,8 @@ anything changes. Versions have no `-F` flags. As with `!add` and
 
 So far only `cosine` and `cosine-dense` have views; the other methods refuse
 the commands and `view=` with an error. For `cosine`, each theorem's
-features are stored once per version, and each view has its own IDF table
-and the norm of each of its theorems.
+features are stored once per version, and each view has its own IDF table,
+over the features of its theorems, and the norm of each of its theorems.
 
 `tests/views.py` measures the memory and the view changes of a process on a
 synthetic corpus written by `tests/gen.py`.

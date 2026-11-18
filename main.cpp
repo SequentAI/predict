@@ -88,7 +88,8 @@ const long boost_depth = 128;
 
 // The state of the interactive mode: the corpus, and [make], which builds a
 // predictor for it; the versions and views, and [make_view], which builds a
-// predictor for a view (null if the method has none).
+// predictor for a view, given the number of the versions' features (null if
+// the method has none).
 struct Session {
   Corpus& corpus;
   vector<unsigned char>& statures;
@@ -96,7 +97,7 @@ struct Session {
   function<unique_ptr<Predictor>()> make;
   Views views;
   string method;
-  function<unique_ptr<ViewPredictor>(const View&)> make_view;
+  function<unique_ptr<ViewPredictor>(const View&, long)> make_view;
   long predno;
   double boost;
   bool scores;
@@ -177,6 +178,8 @@ void set_view(Session& s, const string& args, const string& line) {
     exit_error("Expected `!view <view> <file>', not `" + line + "'!");
   check_readable(file, line);
   ifstream ic(file);
+  if (!ic)
+    exit_error("Cannot read `" + file + "' in `" + line + "'!");
   vector<pair<string, const Version*> > changes;
   string l;
   while (getline(ic, l)) {
@@ -213,7 +216,7 @@ void set_view(Session& s, const string& args, const string& line) {
   View& view = s.views.views[name];
   view.chosen = chosen;
   view.arrange(s.views.features.size());
-  view.predictor = s.make_view(view);
+  view.predictor = s.make_view(view, s.views.features.size());
   s.views.drop_unused();
 }
 
@@ -291,7 +294,7 @@ void view_query(Session& s, string line, size_t start,
     s.views.features.no);
   // a feature no theorem of the view has is unknown to the view
   query.erase(remove_if(query.begin(), query.end(),
-    [&](const pair<long, double>& f) { return !view.has(f.first); }),
+    [&](const pair<long, double>& f) { return view.rank_of(f.first) < 0; }),
     query.end());
   LDPairVec ans = view.predictor->predict_weighted(query,
     scope.limits ? &in_scope : nullptr, no_adv);
@@ -667,13 +670,14 @@ int main(int argc, char* argv[]) {
 
   // if user did not supply evaluation file
   if (evalf == "") {
-    auto make_view = [&](const View& view) {
+    auto make_view = [&](const View& view, long sym_num) {
       return unique_ptr<ViewPredictor>(
-        new CosineView(view, method == "cosine-dense"));
+        new CosineView(view, method == "cosine-dense", sym_num));
     };
     const bool views = method == "cosine" || method == "cosine-dense";
     Session session{corpus, statures, theories, make, Views(), method,
-      views ? make_view : function<unique_ptr<ViewPredictor>(const View&)>(),
+      views ? make_view
+        : function<unique_ptr<ViewPredictor>(const View&, long)>(),
       predno, boost, scores, import_path.empty() && export_path.empty()};
     interaction(predictor, session);
   }

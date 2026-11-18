@@ -116,42 +116,49 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
 }
 
 // Cosine's ranking of the theorems of a view, computed as Cosine computes it
-// in a process started on them: with the view's IDF, adding up features in
-// the view's order.
+// in a process started on them: with the view's IDF, numbering features and
+// adding them up by their rank in the view.
 class CosineView : public ViewPredictor {
   public:
-    CosineView(const View& view, bool dense);
+    CosineView(const View& view, bool dense, long sym_num);
 
     LDPairVec predict_weighted(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
 
   private:
-    // the squared norm of the vector of a theorem with features [syms]
-    double norm2(const LVec& syms) const;
+    // the squared norm of the vector of a theorem with features of ranks
+    // [ranks]
+    double norm2(LVec ranks) const;
 
     const View& view;
     bool dense;
-    Tfidf tfidf;
+    Tfidf tfidf;  // by rank
     // norm2 of each theorem of the view
     vector<double> norms2;
 };
 
-CosineView::CosineView(const View& view, bool dense)
-: view(view), dense(dense), tfidf(view.rank.size()) {
-  for (const auto v : view.versions)
-    for (const auto& s : v->syms) tfidf.add(s);
-  if (!dense)
-    for (const auto v : view.versions)
-      for (const auto& s : v->syms) norms2.push_back(norm2(s));
+// the ranks of features [syms] in [table] (View::rank_table)
+LVec ranks_in(const LVec& syms, const LVec& table) {
+  LVec out;
+  for (const auto f : syms) out.push_back(table[f]);
+  return out;
 }
 
-double CosineView::norm2(const LVec& syms) const {
-  LVec in_order(syms);
-  sort(in_order.begin(), in_order.end(),
-    [&](long f, long g) { return view.rank[f] < view.rank[g]; });
+CosineView::CosineView(const View& view, bool dense, long sym_num)
+: view(view), dense(dense), tfidf(view.features()) {
+  const LVec table = view.rank_table(sym_num);
+  for (const auto v : view.versions)
+    for (const auto& s : v->syms) tfidf.add(ranks_in(s, table));
+  if (!dense)
+    for (const auto v : view.versions)
+      for (const auto& s : v->syms) norms2.push_back(norm2(ranks_in(s, table)));
+}
+
+double CosineView::norm2(LVec ranks) const {
+  sort(ranks.begin(), ranks.end());
   double n = 0;
-  for (const auto f : in_order) {
-    const double idf = tfidf.get(f);
+  for (const auto r : ranks) {
+    const double idf = tfidf.get(r);
     n += idf * idf;
   }
   return n;
@@ -159,21 +166,26 @@ double CosineView::norm2(const LVec& syms) const {
 
 LDPairVec CosineView::predict_weighted(const LDPairVec& query,
   const vector<char>* in_scope, long no_adv) const {
-  // as in Cosine::predict_weighted, with features in the view's order
-  LDPairVec terms(query);
+  // as in Cosine::predict_weighted, with features in rank order
+  struct Term {
+    long f, r;
+    double w;
+  };
+  vector<Term> terms;
+  for (const auto& fw : query)
+    terms.push_back(Term{fw.first, view.rank_of(fw.first), fw.second});
   sort(terms.begin(), terms.end(),
-    [&](const pair<long, double>& a, const pair<long, double>& b) {
-      return view.rank[a.first] < view.rank[b.first]; });
+    [](const Term& a, const Term& b) { return a.r < b.r; });
   double wmax = 0;
-  for (const auto& ft : terms)
-    if (tfidf.get(ft.first) != 0)
-      wmax = max(wmax, ft.second);
+  for (const auto& t : terms)
+    if (tfidf.get(t.r) != 0)
+      wmax = max(wmax, t.w);
   double qnorm2 = 0;
-  for (auto& ft : terms) {
-    const double idf = tfidf.get(ft.first);
-    const double w = idf != 0 && wmax > 0 ? ft.second / wmax : 0;
+  for (auto& t : terms) {
+    const double idf = tfidf.get(t.r);
+    const double w = idf != 0 && wmax > 0 ? t.w / wmax : 0;
     qnorm2 += w * w * (idf * idf);
-    ft.second = w * (idf * idf);
+    t.w = w * (idf * idf);
   }
 
   const long n = view.size();
@@ -186,18 +198,18 @@ LDPairVec CosineView::predict_weighted(const LDPairVec& query,
       const auto at = view.locate(i);
       const LVec& syms = at.first->syms[at.second];
       // once for each time the theorem has the feature, as Cosine does
-      for (const auto& ft : terms)
+      for (const auto& t : terms)
         for (const auto f : syms)
-          if (f == ft.first) ans[i].second += ft.second;
+          if (f == t.f) ans[i].second += t.w;
     }
   }
   else
-    for (const auto& ft : terms)
+    for (const auto& t : terms)
       for (size_t v = 0; v < view.versions.size(); ++v) {
-        const auto ths = view.versions[v]->theorems_of(ft.first);
-        for (auto t = ths.first; t != ths.second; ++t) {
-          const long i = view.first[v] + *t;
-          if (!in_scope || (*in_scope)[i]) ans[i].second += ft.second;
+        const auto ths = view.versions[v]->theorems_of(t.f);
+        for (auto th = ths.first; th != ths.second; ++th) {
+          const long i = view.first[v] + *th;
+          if (!in_scope || (*in_scope)[i]) ans[i].second += t.w;
         }
       }
 
@@ -206,7 +218,10 @@ LDPairVec CosineView::predict_weighted(const LDPairVec& query,
     if (!dense) n2 = norms2[i];
     else {
       const auto at = view.locate(i);
-      n2 = norm2(at.first->syms[at.second]);
+      LVec ranks;
+      for (const auto f : at.first->syms[at.second])
+        ranks.push_back(view.rank_of(f));
+      n2 = norm2(ranks);
     }
     if (ans[i].second != 0 && qnorm2 != 0 && n2 != 0)
       ans[i].second /= sqrt(qnorm2 * n2);

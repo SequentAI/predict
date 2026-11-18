@@ -1306,9 +1306,9 @@ fresh v1b A1 C2
 printf 'A 1\nB 1\nC 1\n' > "$WORK/v1.view"
 printf 'A 2\nB 1\n' > "$WORK/v2.view"
 printf 'C 2\nB\n' > "$WORK/v1b.view"
-# The second query's norm rounds otherwise when its features are added up in
-# the process's order rather than the view's.
-view_queries=$'"p", "q"\n"z"@0.7, "s"@0.3, "t"@1.9, "r"@0.11, "q"@2.3, "p"@0.05, "u"@1.3, "w"@0.9\n"s", "t"@0.5\n"z", "w", "u"\n"q"\n[k=2]"p", "q"\n[theory=A]"p", "s"\n[theory=B]"p", "s"\n[theory=A before=1]"p", "q", "r"\n[exclude=B]"p", "q"\n[ancestors=B]"p", "q"\n[theory=C before=1 exclude=A ancestors=B k=3]"u", "p"'
+# On v2, the second query's scores round otherwise when its features are
+# added up in the order the process numbers them rather than the view's.
+view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, "s"@0.463\n"s", "t"@0.5\n"z", "w", "u"\n"q"\n[k=2]"p", "q"\n[theory=A]"p", "s"\n[theory=B]"p", "s"\n[theory=A before=1]"p", "q", "r"\n[exclude=B]"p", "q"\n[ancestors=B]"p", "q"\n[theory=C before=1 exclude=A ancestors=B k=3]"u", "p"'
 # in_view <view>: the queries, each with view=<view> in its scope
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
 # the methods with views; the others refuse them
