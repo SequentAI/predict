@@ -275,20 +275,23 @@ class NaiveBayesView : public ViewPredictor {
       const vector<char>* in_scope, long no_adv) const;
 
   private:
-    // theorem i's sfreq, as the process builds it, in the same order, so
-    // that it is iterated in the same order
-    unordered_map<feature_t, long> sfreq(long i) const;
+    // Theorem i's sfreq, as the process builds it, in the same order, so
+    // that it is iterated in the same order. Features are ranked by [table]
+    // (View::rank_table), or if it is null by View::rank_of.
+    unordered_map<feature_t, long> sfreq(long i, const LVec* table) const;
     double score(long i, map<feature_t, double> symh) const;
-    // adds the features of theorem j to [m] with weight [w], as add_sym does
-    void add(unordered_map<feature_t, long>& m, long j, long w) const;
-    // theorem i's counts (sfreq) in rank order; [acc] is zero for each
-    // feature, as it is left
-    vector<pair<feature_t, long> > counts(long i, LVec& acc) const;
+    // adds the features of theorem j to [m] with weight [w], as add_sym
+    // does, ranked as sfreq ranks them
+    void add(unordered_map<feature_t, long>& m, long j, long w,
+      const LVec* table) const;
+    // theorem i's counts (sfreq) in rank order, ranked by [table]; [acc] is
+    // zero for each feature, as it is left
+    vector<pair<feature_t, long> > counts(long i, LVec& acc,
+      const LVec& table) const;
     // NaiveBayes::index, for the view
-    void index();
+    void index(const LVec& table);
 
     const View& view;
-    LVec ranks;   // View::rank_table
     Tfidf tfidf;  // by rank
     bool dense;
     // The theorems learning the features of theorem i, with weight 1 each,
@@ -310,11 +313,11 @@ class NaiveBayesView : public ViewPredictor {
 
 NaiveBayesView::NaiveBayesView(const View& view, long sym_num,
   long max_deps, bool dense)
-: view(view), ranks(view.rank_table(sym_num)), tfidf(view.features()),
-  dense(dense) {
+: view(view), tfidf(view.features()), dense(dense) {
   const long n = view.size();
+  const LVec table = view.rank_table(sym_num);
   for (const auto v : view.versions)
-    for (const auto& s : v->syms) tfidf.add(ranks_in(s, ranks));
+    for (const auto& s : v->syms) tfidf.add(ranks_in(s, table));
 
   // theorem i learns its first max_deps dependencies (NaiveBayes::learn)
   const LVec ids = view.id_table();
@@ -334,18 +337,20 @@ NaiveBayesView::NaiveBayesView(const View& view, long sym_num,
     for (const auto d : learned[i]) users[next[d]++] = i;
 
   if (dense)
-    for (long i = 0; i < n; ++i) sfreqs.push_back(sfreq(i));
+    for (long i = 0; i < n; ++i) sfreqs.push_back(sfreq(i, &table));
   else
-    index();
+    index(table);
 }
 
 void NaiveBayesView::add(unordered_map<feature_t, long>& m, long j,
-  long w) const {
+  long w, const LVec* table) const {
   const auto at = view.locate(j);
-  for (const auto f : at.first->syms[at.second]) add_sym(m, ranks[f], w);
+  for (const auto f : at.first->syms[at.second])
+    add_sym(m, table ? (*table)[f] : view.rank_of(f), w);
 }
 
-unordered_map<feature_t, long> NaiveBayesView::sfreq(long i) const {
+unordered_map<feature_t, long> NaiveBayesView::sfreq(long i,
+  const LVec* table) const {
   // NaiveBayes's sfreq starts from a copy of this
   static const unordered_map<feature_t, long> empty(100);
   unordered_map<feature_t, long> m(empty);
@@ -353,12 +358,12 @@ unordered_map<feature_t, long> NaiveBayesView::sfreq(long i) const {
   bool self = false;
   for (long u = user_start[i]; u < user_start[i + 1]; ++u) {
     if (!self && users[u] >= i) {
-      add(m, i, 1000);
+      add(m, i, 1000, table);
       self = true;
     }
-    add(m, users[u], 1);
+    add(m, users[u], 1, table);
   }
-  if (!self) add(m, i, 1000);
+  if (!self) add(m, i, 1000, table);
   return m;
 }
 
@@ -366,16 +371,17 @@ double NaiveBayesView::score(long i, map<feature_t, double> symh) const {
   const long t = 1000 + user_start[i + 1] - user_start[i];
   if (dense)
     return score_nbayes(t, sfreqs[i], move(symh), tfidf);
-  return score_nbayes(t, sfreq(i), move(symh), tfidf);
+  // only near ties need it, so features are ranked without a table
+  return score_nbayes(t, sfreq(i, nullptr), move(symh), tfidf);
 }
 
-vector<pair<feature_t, long> > NaiveBayesView::counts(long i, LVec& acc)
-  const {
+vector<pair<feature_t, long> > NaiveBayesView::counts(long i, LVec& acc,
+  const LVec& table) const {
   LVec touched;
   const auto add = [&](long j, long w) {
     const auto at = view.locate(j);
     for (const auto f : at.first->syms[at.second]) {
-      const long r = ranks[f];
+      const long r = table[f];
       if (acc[r] == 0) touched.push_back(r);
       acc[r] += w;
     }
@@ -391,13 +397,13 @@ vector<pair<feature_t, long> > NaiveBayesView::counts(long i, LVec& acc)
   return out;
 }
 
-void NaiveBayesView::index() {
+void NaiveBayesView::index(const LVec& table) {
   const long n = view.size(), features = view.features();
   LVec acc(features, 0);
 
   post_start.assign(features + 1, 0);
   for (long i = 0; i < n; ++i)
-    for (const auto& fs : counts(i, acc)) ++post_start[fs.first + 1];
+    for (const auto& fs : counts(i, acc, table)) ++post_start[fs.first + 1];
   for (long f = 0; f < features; ++f)
     post_start[f + 1] += post_start[f];
   postings.resize(post_start[features]);
@@ -408,7 +414,7 @@ void NaiveBayesView::index() {
     const long t = 1000 + user_start[i + 1] - user_start[i];
     base[i] = 30 * log(t);
     // in rank order, as NaiveBayes::index adds them up
-    for (const auto& fs : counts(i, acc)) {
+    for (const auto& fs : counts(i, acc, table)) {
       const double idf = tfidf.get(fs.first);
       const double s = fs.second;
       const double b = idf * 0.2 * log(1 + (1 - s) / t);

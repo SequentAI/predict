@@ -135,12 +135,12 @@ class kNNView : public ViewPredictor {
     const View& view;
     bool credit_deps;
     Tfidf tfidf;  // by rank
-    LVec ids;     // View::id_table
+    LVec ids;     // View::id_table, if credit_deps
 };
 
 kNNView::kNNView(const View& view, long sym_num, bool credit_deps)
 : view(view), credit_deps(credit_deps), tfidf(view.features()),
-  ids(view.id_table()) {
+  ids(credit_deps ? view.id_table() : LVec()) {
   const LVec table = view.rank_table(sym_num);
   for (const auto v : view.versions)
     for (const auto& s : v->syms) tfidf.add(ranks_in(s, table));

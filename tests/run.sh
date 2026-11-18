@@ -1312,8 +1312,8 @@ view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, 
 # in_view <view>: the queries, each with view=<view> in its scope
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
 # the methods with views; the others refuse them
-view_methods=(cosine cosine-dense knn mepo-cosine nbayes nbayes-dense
-  "nbayes -d 1" mash)
+view_methods=(cosine cosine-dense knn "knn -c 0" mepo-cosine nbayes
+  nbayes-dense "nbayes -d 1" mash "mash -c 0")
 no_view_methods=(mepo "mepo -P" mesh rforest)
 
 # 45. a query on a view ranks as a process started on the view's theorems,
