@@ -18,8 +18,11 @@ trap 'rm -rf "$WORK"' EXIT
 failures=0
 number=0
 
-ok() { echo "ok $number - $1"; }
-fail() { echo "FAIL $number - $1: $2"; failures=$((failures + 1)); }
+# a test passes only if none of its checked runs exited non-zero
+ok() {
+  if [ -s "$WORK/failed" ]; then fail "$1" "$(head -n 1 "$WORK/failed")"; else echo "ok $number - $1"; fi
+}
+fail() { echo "FAIL $number - $1: $2"; failures=$((failures + 1)); rm -f "$WORK/failed"; }
 
 # run <name> <options...> < query: runs predict on a corpus written in
 # $WORK/<name>.{syms,deps,seq}, with a limit of $LIMIT seconds (default 5)
@@ -28,6 +31,16 @@ run() {
   shift
   timeout "${LIMIT:-5}" "$PREDICT" "$WORK/$name.syms" "$WORK/$name.deps" "$WORK/$name.seq" \
     "$@" 2>"$WORK/stderr"
+}
+
+# checked <name> <options...> < query: run, for a run that must succeed; a
+# non-zero exit status, which output piped on or captured in $(...) hides,
+# is written to $WORK/failed and fails the test
+checked() {
+  run "$@"
+  local status=$?
+  [ $status -eq 0 ] || echo "'$*' exited with status $status" >> "$WORK/failed"
+  return $status
 }
 
 # corpus <name> <seq> <syms> <deps>: writes a corpus; each argument is the
@@ -1092,7 +1105,7 @@ if [ -n "$msg" ]; then fail "ancestors boost" "$msg"; else ok "ancestors boost";
 
 # 39. k sets the number of predictions of one query
 number=39
-out=$(run dag -p cosine -L "$WORK/dag.thy" -n 5 <<<$'[k=3]"p"\n"p"\n[k=50]"p"')
+out=$(checked dag -p cosine -L "$WORK/dag.thy" -n 5 <<<$'[k=3]"p"\n"p"\n[k=50]"p"')
 if [ "$(sed -n 1p <<<"$out" | wc -w)" -ne 3 ] || [ "$(sed -n 2p <<<"$out" | wc -w)" -ne 5 ] ||
    [ "$(sed -n 3p <<<"$out" | wc -w)" -ne 11 ]; then
   fail "scope k" "got '$out'"
@@ -1108,11 +1121,11 @@ number=40
 : > "$WORK/hot.deps"
 sed 's/^\([A-Za-z]*\)\..*/&:\1/' "$WORK/hot.seq" > "$WORK/hot.thy"
 msg=
-top=$(run hot -p cosine -n 100 <<<'"x", "y"' | tr ' ' '\n' | grep -c '^Hot\.')
+top=$(checked hot -p cosine -n 100 <<<'"x", "y"' | tr ' ' '\n' | grep -c '^Hot\.')
 [ "$top" -eq 100 ] || msg="the 100 best of cosine hold $top Hot theorems"
 for m in $methods; do
   [ -n "$msg" ] && break
-  out=$(run hot -p $m -L "$WORK/hot.thy" <<<'[k=8 exclude=Hot]"x", "y"')
+  out=$(checked hot -p $m -L "$WORK/hot.thy" <<<'[k=8 exclude=Hot]"x", "y"')
   [ "$(wc -w <<<"$out")" -eq 8 ] && ! grep -q Hot <<<"$out" || msg="$m: '$out'"
 done
 if [ -n "$msg" ]; then fail "scope filters before selection" "$msg"; else ok "scope filters before selection"; fi
@@ -1122,8 +1135,8 @@ number=41
 sed 's/.*/&:lists/' "$DATA/lists.seq" > "$WORK/lists.thy"
 msg=
 for m in $methods; do
-  a=$(run lists -p $m -n 16 -S < "$DATA/lists.queries")
-  b=$(run lists -p $m -n 16 -S -L "$WORK/lists.thy" < "$DATA/lists.queries")
+  a=$(checked lists -p $m -n 16 -S < "$DATA/lists.queries")
+  b=$(checked lists -p $m -n 16 -S -L "$WORK/lists.thy" < "$DATA/lists.queries")
   [ -n "$a" ] && [ "$a" = "$b" ] || { msg="$m"; break; }
 done
 if [ -n "$msg" ]; then fail "-L alone ranks as before" "differ for $msg"; else ok "-L alone ranks as before"; fi
@@ -1149,16 +1162,16 @@ for f in seq syms deps thy; do cat "$WORK/new.$f" >> "$WORK/kept.$f"; done
 queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
 msg=
 for m in $methods rforest; do
-  out=$(run up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
+  out=$(checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
 !add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy
 $queries
 !replace Script $WORK/new.syms $WORK/new.deps $WORK/new.seq $WORK/new.thy
 $queries")
-  want="$(run up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries")
+  want="$(checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries")
 12
-$(run dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$queries")
+$(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$queries")
 11
-$(run kept -p $m -L "$WORK/kept.thy" -n 20 -S <<<"$queries")"
+$(checked kept -p $m -L "$WORK/kept.thy" -n 20 -S <<<"$queries")"
   [ "$out" = "$want" ] || { msg="$m: '$out', not '$want'"; break; }
 done
 if [ -n "$msg" ]; then fail "!add and !replace" "$msg"; else ok "!add and !replace"; fi
