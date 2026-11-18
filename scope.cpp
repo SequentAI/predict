@@ -190,8 +190,8 @@ void boost_ancestors(LDPairVec& ans, const Scope& scope,
 }
 
 /* Removes the theorems of theory [t] from [corpus], [statures] and
-   [theories], keeping the others in their order. Their features stay
-   known, possibly with no theorem having them. */
+   [theories], keeping the others in their order. Their features and types
+   stay known, possibly with no theorem having them. */
 void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
                    Theories& theories, long t) {
   const long n = corpus.no_th.size();
@@ -204,6 +204,10 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
     corpus.no_th[to[i]] = corpus.no_th[i];
     corpus.deps[to[i]] = corpus.deps[i];
     corpus.syms[to[i]] = corpus.syms[i];
+    if (corpus.types) {
+      corpus.typed[to[i]] = corpus.typed[i];
+      corpus.freq_only[to[i]] = corpus.freq_only[i];
+    }
     statures[to[i]] = statures[i];
     theories.of[to[i]] = theories.of[i];
     theories.priv[to[i]] = theories.priv[i];
@@ -211,6 +215,10 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
   corpus.no_th.resize(m);
   corpus.deps.resize(m);
   corpus.syms.resize(m);
+  if (corpus.types) {
+    corpus.typed.resize(m);
+    corpus.freq_only.resize(m);
+  }
   statures.resize(m);
   theories.of.resize(m);
   theories.priv.resize(m);

@@ -1151,41 +1151,77 @@ if [ -n "$msg" ]; then fail "-L alone ranks as before" "differ for $msg"; else o
 
 # 42. !add and !replace change the corpus of a running predict: it then ranks
 # as a predict started on the changed corpus. Script.s3 alone has "u", so
-# after it is replaced, "u" is a feature no theorem has.
+# after it is replaced, "u" is a feature no theorem has. With -P, on a typed
+# copy of the fixture: only the added Down theorems have the type "k$set",
+# Script.s3 alone has "w", as a frequency-only token, and Down.d2 alone has
+# "x", as one, which stays after the replacement. Base.b1 is local, so a
+# query left with no known symbol starts from its symbols.
 number=42
-# part <name> <pattern>: the theorems of the dag fixture matching the grep
-# pattern, as files $WORK/<name>.{seq,syms,deps,thy}
+# part <from> <to> <pattern>: the theorems of corpus <from> matching the grep
+# pattern, as files $WORK/<to>.{seq,syms,deps,thy}
 part() {
   local f
-  for f in seq syms deps thy; do grep -E "$2" "$WORK/dag.$f" > "$WORK/$1.$f"; done
+  for f in seq syms deps thy; do grep -E "$3" "$WORK/$1.$f" > "$WORK/$2.$f"; done
 }
-part up '^(Base|Mid|Other|Script)\.'
-part down '^Down\.'
+for f in seq deps thy; do cp "$WORK/dag.$f" "$WORK/tdag.$f"; done
+printf '%s\n' \
+  'Base.b1:"p"<c 1 "k$num">, "q"<c 1 _>*2' \
+  'Base.b2:"q"<c 1 "k$num">, "p"<c 1 "k$num">+3' \
+  'Base.t:"t"<c 1>' \
+  'Mid.m1:"p"<c 1 _>, "r"<c 2 "k$num" "k$bool">' \
+  'Mid.t:"t"<c 1>*3' \
+  'Other.o1:"p"<c 1 "k$num">, "q"<c 1 "k$num">' \
+  'Other.o2:"r"<c 2 "k$num" "k$bool">, "q"<c 1 _>+2' \
+  'Script.s1:"p"<c 1 "k$num">' \
+  'Script.s2:"p"<c 1 _>, "q"<c 1 "k$num">*2' \
+  'Script.s3:"p"<c 1 "k$num">, "q"<c 1 _>, "r"<c 2 _ "k$bool">, "u"<v 0>, "w"+4' \
+  'Down.d1:"p"<c 1 "k$set">, "q"<c 1 "k$num">' \
+  'Down.d2:"p"<c 1 "k$set">*2, "q"<c 1 _>, "r"<c 2 "k$set" "k$bool">, "x"+2' \
+  > "$WORK/tdag.syms"
 printf 'Script.n1\nScript.n2\n' > "$WORK/new.seq"
 printf 'Script.n1:"p", "v"\nScript.n2:"v"\n' > "$WORK/new.syms"
 printf 'Script.n2:Script.n1 Base.b1\n' > "$WORK/new.deps"
 printf 'Script.n1:Script private\nScript.n2:Script\n' > "$WORK/new.thy"
-part kept '^(Base|Mid|Other|Down)\.'
-for f in seq syms deps thy; do cat "$WORK/new.$f" >> "$WORK/kept.$f"; done
+for f in seq deps thy; do cp "$WORK/new.$f" "$WORK/tnew.$f"; done
+printf '%s\n' 'Script.n1:"p"<c 1 "k$set">, "v"<c 1 "k$num">*2, "q"<c 1 "k$set">+2' \
+  'Script.n2:"v"<c 1 _>' > "$WORK/tnew.syms"
+for c in "" t; do
+  part ${c}dag ${c}up '^(Base|Mid|Other|Script)\.'
+  part ${c}dag ${c}down '^Down\.'
+  part ${c}dag ${c}kept '^(Base|Mid|Other|Down)\.'
+  for f in seq syms deps thy; do cat "$WORK/${c}new.$f" >> "$WORK/${c}kept.$f"; done
+done
 queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
+typed_queries=$'"p"<c 1 "k$set">, "q"\n"u"<v 0>, "p"<c 1 "k$num">@0.5\n"w", "q"@0.5\n"x", "p"@0.5\n"u"<v 0>\n"w"'
+printf 'Base.b1:local\n' > "$WORK/tdag.statures"
+# same_as_fresh <c> <queries> <options...>: sets msg unless predict with the
+# options, started on corpus <c>up, answers the queries after `!add <c>down`
+# and after `!replace Script <c>new` as when started on <c>dag and <c>kept
+same_as_fresh() {
+  local c=$1 q=$2 out want
+  shift 2
+  out=$(note='with !add and !replace' checked ${c}up -L "$WORK/${c}up.thy" -n 20 -S "$@" <<<"$q
+!add $WORK/${c}down.syms $WORK/${c}down.deps $WORK/${c}down.seq $WORK/${c}down.thy
+$q
+!replace Script $WORK/${c}new.syms $WORK/${c}new.deps $WORK/${c}new.seq $WORK/${c}new.thy
+$q")
+  want="$(checked ${c}up -L "$WORK/${c}up.thy" -n 20 -S "$@" <<<"$q")
+12
+$(checked ${c}dag -L "$WORK/${c}dag.thy" -n 20 -S "$@" <<<"$q")
+11
+$(checked ${c}kept -L "$WORK/${c}kept.thy" -n 20 -S "$@" <<<"$q")"
+  [ "$out" = "$want" ] || msg="$*: '$out', not '$want'"
+}
 msg=
 for m in $methods rforest; do
-  out=$(note='with !add and !replace' checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
-!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy
-$queries
-!replace Script $WORK/new.syms $WORK/new.deps $WORK/new.seq $WORK/new.thy
-$queries")
-  want="$(checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries")
-12
-$(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$queries")
-11
-$(checked kept -p $m -L "$WORK/kept.thy" -n 20 -S <<<"$queries")"
-  [ "$out" = "$want" ] || { msg="$m: '$out', not '$want'"; break; }
+  [ -n "$msg" ] && break
+  same_as_fresh "" "$queries" -p $m
 done
+[ -n "$msg" ] || same_as_fresh t "$queries"$'\n'"$typed_queries" -p mepo -P -F "$WORK/tdag.statures"
 if [ -n "$msg" ]; then fail "!add and !replace" "$msg"; else ok "!add and !replace"; fi
 
-# 43. malformed scopes and commands are errors, and commands need a corpus
-# that can change
+# 43. malformed scopes and commands are errors, commands need a corpus that
+# can change, so not -x or -y, and -P still does not work with snapshots
 number=43
 msg=
 for q in '[before=2]"p"' '[k=0]"p"' '[k=x]"p"' '[size=3]"p"' '[k=2 k=3]"p"' '[exclude=]"p"' '[k=2"p"' '!remove Script' '!add a b c'; do
@@ -1201,10 +1237,22 @@ for c in "!add $WORK/down.syms $WORK/down.deps $WORK/missing.seq $WORK/down.thy"
     msg="'$c' with a missing file: exit status $status, output '$out'"
   fi
 done
-if [ -z "$msg" ]; then
-  run dag -p mepo -P <<<"!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy" >/dev/null &&
-    msg="!add accepted with -P"
-fi
+for o in -x -y; do
+  [ -n "$msg" ] && break
+  out=$(run dag -p cosine $o "$WORK/none" <<<"!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy")
+  status=$?
+  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q "does not work with -y or -x" "$WORK/stderr"; then
+    msg="!add with $o: exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+  fi
+done
+for o in -i -o; do
+  [ -n "$msg" ] && break
+  out=$(run dag -p mepo -P $o "$WORK/typed.snap" <<<'"p"')
+  status=$?
+  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q -- "-P does not work with snapshots" "$WORK/stderr"; then
+    msg="-P with $o: exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+  fi
+done
 if [ -z "$msg" ]; then
   printf 'Base.b1:Base secret\n' > "$WORK/bad.thy"
   run dag -p cosine -L "$WORK/bad.thy" <<<'"p"' >/dev/null && msg="flag secret accepted"

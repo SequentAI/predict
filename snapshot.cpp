@@ -22,12 +22,17 @@
 
 const string snapshot_magic = "predict snapshot\n";
 
-// The tables a snapshot holds.
+// The theorems predict holds. A snapshot holds all but the typed symbols:
+// with [types] (-P), [typed] and [freq_only] give each theorem's typed
+// symbols and frequency-only occurrences, as read_syms reads them; without,
+// they are empty.
 struct Corpus {
   SVec &no_th, &no_sym;
   SLMap &th_no;
   HLMap &sym_no;
   LVecVec &deps, &syms, &sym_ths;
+  TypeTable *types;
+  TypedSyms &typed, &freq_only;
 };
 
 class SnapshotWriter {
