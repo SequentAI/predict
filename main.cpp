@@ -68,8 +68,8 @@ const string usage_str =
   "predict --version prints the commit predict was built from.\n";
 
 
-void print_prediction(LDPairVec prediction, long n_predictions,
-  vector<string> no_th, bool scores) {
+void print_prediction(const LDPairVec& prediction, long n_predictions,
+  const vector<string>& no_th, bool scores) {
   for (long j = 0; j < n_predictions; ++j) {
     // print label
     cout << no_th[prediction[j].first] << " ";
@@ -204,7 +204,7 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
 }
 
 void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
-  SLMap th_no, vector<string> no_th, bool scores) {
+  const SLMap& th_no, const vector<string>& no_th, bool scores) {
   unordered_set<long> eval;
   read_eval(evalf, th_no, eval);
 

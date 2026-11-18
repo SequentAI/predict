@@ -9,7 +9,8 @@
 
 class RandomForest : public Predictor {
   public:
-    RandomForest(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num,
+    RandomForest(const LVecVec& deps, const LVecVec& syms,
+      const LVecVec& sym_ths, long sym_num,
       long n_trees, long n_samples, long n_features, double depweight);
     ~RandomForest();
 
@@ -52,8 +53,8 @@ class RandomForest : public Predictor {
 };
 
 // TODO: seed hard-coded ...
-RandomForest::RandomForest(LVecVec deps, LVecVec syms, LVecVec sym_ths,
-  long sym_num,
+RandomForest::RandomForest(const LVecVec& deps, const LVecVec& syms,
+  const LVecVec& sym_ths, long sym_num,
   long n_trees, long n_samples, long n_features, double depweight)
 : Predictor(deps, syms, sym_ths, sym_num), forest(n_trees, NULL),
   n_samples(n_samples), n_features(n_features), depweight(depweight),
@@ -72,7 +73,7 @@ void RandomForest::import_data(string dirname) {
   for (unsigned i = 0; i < forest.size(); i++) {
     delete forest[i];
     forest[i] = new DecisionTree(dirname + "/tree" + to_string(i) + ".dot",
-      th_no, sym_no);
+      *th_no, *sym_no);
   }
   prelearned = true;
 }
@@ -80,7 +81,7 @@ void RandomForest::import_data(string dirname) {
 void RandomForest::export_data(string dirname) const {
   for (unsigned i = 0; i < forest.size(); i++)
     forest[i]->write_to_file(dirname + "/tree" + to_string(i) + ".dot",
-      no_th, no_sym);
+      *no_th, *no_sym);
 }
 
 void RandomForest::learn(long from, long to) {

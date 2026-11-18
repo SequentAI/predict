@@ -548,7 +548,7 @@ void read_statures(const string &fname, const SLMap &th_no,
   }
 }
 
-void read_eval(const string &fname, unordered_map<string, long> &th_no,
+void read_eval(const string &fname, const unordered_map<string, long> &th_no,
                unordered_set<long> &eval) {
   ifstream ic(fname);
   string line;

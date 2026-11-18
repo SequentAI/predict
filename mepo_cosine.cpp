@@ -39,7 +39,8 @@ double euclid(const LDMap &syms1, const LVec &syms2, const Tfidf &tfidf) {
 
 class MePoCosine : public Predictor {
   public:
-    MePoCosine(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num);
+    MePoCosine(const LVecVec& deps, const LVecVec& syms,
+      const LVecVec& sym_ths, long sym_num);
 
     void learn(long from, long to);
 
@@ -52,7 +53,8 @@ class MePoCosine : public Predictor {
 
 };
 
-MePoCosine::MePoCosine(LVecVec deps, LVecVec syms, LVecVec sym_ths, long sym_num)
+MePoCosine::MePoCosine(const LVecVec& deps, const LVecVec& syms,
+  const LVecVec& sym_ths, long sym_num)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num) {
 }
 
