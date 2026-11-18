@@ -8,7 +8,8 @@
 // and <syms>: the theorem names, the features' hashes, and each theorem's
 // dependencies and features and each feature's theorems as numbers. Starting
 // from one skips parsing the text, which takes most of predict's start-up
-// time. A snapshot is read only by the version of predict that wrote it.
+// time. A snapshot is read only by a predict built from the commit that wrote
+// it.
 //
 // Layout: the magic line, the version (a string), the theorem names (a list of
 // strings), the feature hashes (their number, then 8 bytes each, least

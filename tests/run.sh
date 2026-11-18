@@ -1190,4 +1190,9 @@ if [ -z "$msg" ]; then
 fi
 if [ -n "$msg" ]; then fail "bad scopes and commands" "$msg"; else ok "bad scopes and commands"; fi
 
+# 44. --version prints the commit predict was built from
+number=44
+out=$("$PREDICT" --version)
+if [[ $out =~ ^predict\ [0-9a-f]{40}$ ]]; then ok "version is a commit"; else fail "version is a commit" "--version printed '$out'"; fi
+
 [ $failures -eq 0 ]

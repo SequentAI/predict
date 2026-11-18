@@ -16,3 +16,9 @@ jobs:
       - run: make
       - run: ./predict --version
       - run: make test
+      - name: a build from a source archive says its commit
+        run: |
+          mkdir "$RUNNER_TEMP/archive"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/archive"
+          make -C "$RUNNER_TEMP/archive" predict
+          test "$("$RUNNER_TEMP/archive/predict" --version)" = "predict $(git rev-parse HEAD)"
