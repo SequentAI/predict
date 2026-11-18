@@ -324,12 +324,16 @@ LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
     return true;
   };
 
-  // as in predict_weighted; and if the query has no symbol, the relevant
-  // set starts as the symbols of the local facts (Sledgehammer's
+  // as in predict_weighted; and if the query has no known symbol, the
+  // relevant set starts as the symbols of the local facts (Sledgehammer's
   // if_empty_replace_with_scope)
   LVecVec rel(nsyms), chained(nsyms);
-  bool concl = false;
+  bool concl = false, any = false;
   for (const auto& q : query) {
+    // a symbol no learned fact has, not even frequency-only (all its facts
+    // were replaced), is unknown, as to a predict started on these facts
+    if (type_counts[q.sym].empty()) continue;
+    any = true;
     if (q.weight < 1) add(chained[q.sym], q.ptype);
     else {
       add(rel[q.sym], q.ptype);
@@ -337,7 +341,7 @@ LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
     }
   }
   if (!concl) rel = chained;
-  if (query.empty()) {
+  if (!any) {
     rel.assign(nsyms, {});
     for (long i = 0; i < maxth; ++i)
       if (visible(i, maxth) && (statures[i] & STATURE_LOCAL))

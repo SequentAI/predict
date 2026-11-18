@@ -93,8 +93,6 @@ struct Session {
   long predno;
   double boost;
   bool scores;
-  // with [types], the predictor is a MePo over typed symbols
-  TypeTable* types;
   // whether the corpus may change (!add and !replace)
   bool growable;
 };
@@ -127,8 +125,13 @@ void add_theorems(Session& s, const vector<string>& files) {
   s.statures.resize(n, 0);
   s.theories.resize(n);
   read_deps(depsf, c.th_no, c.deps);
+  if (c.types) {
+    c.typed.resize(n);
+    c.freq_only.resize(n);
+  }
   long sym_num = c.no_sym.size();
-  read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym);
+  read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym,
+    c.types, &c.typed, &c.freq_only);
   read_theories(theoriesf, c.th_no, s.theories);
 }
 
@@ -137,7 +140,7 @@ void add_theorems(Session& s, const vector<string>& files) {
 // <theories>` removes the theorems of <theory> first.
 void command(Session& s, const string& line) {
   if (!s.growable)
-    exit_error("`" + line + "' does not work with -P, -y or -x!");
+    exit_error("`" + line + "' does not work with -y or -x!");
   if (line.rfind("!add ", 0) == 0)
     add_theorems(s, command_files(line.substr(5), line));
   else if (line.rfind("!replace ", 0) == 0) {
@@ -183,10 +186,10 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
     p->set_scope(scoped ? &in_scope : nullptr);
 
     LDPairVec ans;
-    if (s.types)
+    if (s.corpus.types)
       ans = static_cast<MePo&>(*p).predict_typed(
         parse_typed_query(line.begin() + start, line.end(), s.corpus.sym_no,
-          *s.types), n, no_adv);
+          *s.corpus.types), n, no_adv);
     else {
       LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
         s.corpus.sym_no);
@@ -412,8 +415,11 @@ int main(int argc, char* argv[]) {
   LVecVec deps,          // dependencies of each theorem
           syms,          // syms[t] holds the symbols of a theorem t
           sym_ths;       // sym_ths[s] holds the theorems which contain s
+  TypeTable types;
+  TypedSyms typed, freq_only;
 
-  Corpus corpus{no_th, no_sym, th_no, sym_no, deps, syms, sym_ths};
+  Corpus corpus{no_th, no_sym, th_no, sym_no, deps, syms, sym_ths,
+    typed_mepo ? &types : nullptr, typed, freq_only};
   if (!snapshot_in.empty()) {
     const string why = read_snapshot(snapshot_in, version_str, corpus);
     if (!why.empty()) {
@@ -430,11 +436,12 @@ int main(int argc, char* argv[]) {
   syms.resize(no_th.size());
 
   read_deps(depsf, th_no, deps);
-  TypeTable types;
-  TypedSyms typed(typed_mepo ? no_th.size() : 0),
-    freq_only(typed_mepo ? no_th.size() : 0);
+  if (typed_mepo) {
+    typed.resize(no_th.size());
+    freq_only.resize(no_th.size());
+  }
   read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
-    typed_mepo ? &types : nullptr, &typed, &freq_only);
+    corpus.types, &typed, &freq_only);
 
   if (!snapshot_out.empty()) {
     write_snapshot(snapshot_out, version_str, corpus);
@@ -497,8 +504,7 @@ int main(int argc, char* argv[]) {
   // if user did not supply evaluation file
   if (evalf == "") {
     Session session{corpus, statures, theories, make, predno, boost, scores,
-      typed_mepo ? &types : nullptr,
-      !typed_mepo && import_path.empty() && export_path.empty()};
+      import_path.empty() && export_path.empty()};
     interaction(predictor, session);
   }
   else
