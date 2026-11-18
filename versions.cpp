@@ -95,9 +95,11 @@ struct Views {
 };
 
 /* Reads the dependencies of each theorem of a version, numbered in [th_no],
-   from lines of <deps>'s format. A dependency need not be of the version's
-   theory, so it is kept as an id, which a view resolves. */
-vector<SVec> read_version_deps(const string& fname, const SLMap& th_no) {
+   from lines of <deps>'s format, every line of a theorem of [th_no] (from
+   [seqf]). A dependency need not be of the version's theory, so it is kept
+   as an id, which a view resolves. */
+vector<SVec> read_version_deps(const string& fname, const SLMap& th_no,
+                               const string& seqf) {
   vector<SVec> deps(th_no.size());
   ifstream ic(fname);
   if (!ic)
@@ -110,10 +112,9 @@ vector<SVec> read_version_deps(const string& fname, const SLMap& th_no) {
       exit_error("Expected colon in line `" + line + "'!");
     ++pos;
     auto got = th_no.find(thn);
-    if (got == th_no.end()) {
-      cerr << "dep item missing in seq: " << thn << endl;
-      continue;
-    }
+    if (got == th_no.end())
+      exit_error("Theorem `" + thn + "' of `" + fname + "' is not in `" +
+                 seqf + "'!");
     while (pos < line.size()) {
       if (line[pos] == ' ') {
         ++pos;
@@ -146,8 +147,26 @@ Version read_version(Views& views, const string& theory,
     if (t == -1 || theories.of[i] != t)
       exit_error("Theorem `" + no_th[i] + "' is not of theory `" + theory +
                  "' in `" + theoriesf + "'!");
+  // read_theories skips lines of theorems not in <seq> and keeps a
+  // theorem's last line, so every line is checked here
+  {
+    ifstream ic(theoriesf);
+    string line;
+    while (getline(ic, line)) {
+      size_t pos = 0;
+      const string thn = read_id(line, pos, ":");
+      if (!th_no.count(thn))
+        exit_error("Theorem `" + thn + "' of `" + theoriesf +
+                   "' is not in `" + seqf + "'!");
+      if (line.substr(pos + 1, line.find(' ', pos) - pos - 1) != theory)
+        exit_error("Theorem `" + thn + "' is not of theory `" + theory +
+                   "' in `" + theoriesf + "'!");
+    }
+    if (ic.bad())
+      exit_error("Cannot read theories file `" + theoriesf + "'!");
+  }
 
-  const vector<SVec> deps = read_version_deps(depsf, th_no);
+  const vector<SVec> deps = read_version_deps(depsf, th_no, seqf);
   // features numbered in the order the file first names them
   LVecVec syms(n), sym_ths;
   long sym_num = 0;

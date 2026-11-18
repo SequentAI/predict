@@ -9,13 +9,13 @@ as version a. Theories T(3v), T(3v+1) and T(3v+2), for view v in 0..7, also
 get version b: the same theorem ids and dependencies, each theorem with the
 features of the theorem 80,000 places later in <seq> (wrapping around). View
 v has every theory at a but its three at b. predict starts on empty files and
--L of an empty file, view v0 is created and its peak memory is read ("one
-view"); then views v1 to v7 are created, and the peak is read again ("eight
-views"). Last, five changes of v0 switch its three theories between a and b,
-and the median time of the changes is printed. Since predict drops the
-versions no view uses, each view change is preceded by `!version` commands
-storing the versions it uses that predict no longer holds; they are not
-timed.
+-L of an empty file, every version is stored, view v0 is created and its
+peak memory is read ("one view"); then views v1 to v7 are created, and the
+peak is read again ("eight views"). Last, five changes of v0 switch its
+three theories between a and b, and the median time of the changes is
+printed. Since predict drops the versions no view uses, each later view
+change is preceded by `!version` commands storing again the versions it
+uses that predict no longer holds; they are not timed.
 """
 
 import os
@@ -150,6 +150,9 @@ def main() -> None:
         p = Predict([predict, empty, empty, empty, "-L", empty, "-p", method,
                      *options])
         s = Session(p, vs)
+        for key, store in vs.stores.items():
+            p.send(store)
+            s.stored.add(key)
 
         def create(v: int) -> None:
             s.view(f"v{v}", {t: "b" if t in own(v) else "a"

@@ -1405,6 +1405,11 @@ number=46
 msg=
 cp "$WORK/A1.thy" "$WORK/bad.thy"
 sed -i 's/^A\.a2:A$/A.a2:B/' "$WORK/bad.thy"
+# lines of a theorem not in the version: of another theory, and its deps
+{ cat "$WORK/A1.thy"; echo 'B.b1:B private'; } > "$WORK/foreign.thy"
+echo 'B.b1:A.a1' > "$WORK/foreign.deps"
+# A.a1 given to B, then to A
+{ echo 'A.a1:B'; cat "$WORK/A1.thy"; } > "$WORK/moved.thy"
 printf 'A 9\n' > "$WORK/unstored.view"
 printf 'A 1 x\n' > "$WORK/long.view"
 # version 1 of B, with A's theorem A.a1
@@ -1436,6 +1441,9 @@ rejected "!version A 1 $A1" 0 'Expected four files' &&
   rejected "$(store A 1)
 $(store A 1)" 1 'already stored' &&
   rejected "!version A 1 $A1 $WORK/bad.thy" 0 'not of theory `A' &&
+  rejected "!version A 1 $A1 $WORK/moved.thy" 0 'Theorem `A.a1. is not of theory `A' &&
+  rejected "!version A 1 $A1 $WORK/foreign.thy" 0 'Theorem `B.b1. of .*foreign.thy. is not in' &&
+  rejected "!version A 1 $WORK/A1.syms $WORK/foreign.deps $WORK/A1.seq $WORK/A1.thy" 0 'Theorem `B.b1. of .*foreign.deps. is not in' &&
   rejected "$(store A 1)
 !view v1 $WORK/unstored.view" 1 'No version `9' &&
   rejected "$(store A 1)
