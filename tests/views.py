@@ -143,6 +143,9 @@ def main() -> None:
     options = sys.argv[4:]
     with tempfile.TemporaryDirectory() as work:
         vs = Versions(work, prefix)
+        if len(vs.theories) < 3 * VIEWS:
+            sys.exit(f"{prefix} has {len(vs.theories)} theories of "
+                     f"{THEORY_SIZE}; {3 * VIEWS} are needed")
         empty = vs.view_file("empty", [])
         p = Predict([predict, empty, empty, empty, "-L", empty, "-p", method,
                      *options])

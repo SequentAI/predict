@@ -101,9 +101,11 @@ struct View {
       for (const auto f : v->appearance)
         if (table[f] < 0) table[f] = next++;
     }
-    ranks.clear();
+    // a fresh vector, so that it is sized to this view, not a past one
+    vector<pair<long,long>> compact;
     for (long f = 0; f < sym_num; ++f)
-      if (table[f] >= 0) ranks.push_back(make_pair(f, table[f]));
+      if (table[f] >= 0) compact.push_back(make_pair(f, table[f]));
+    ranks = move(compact);
   }
 };
 
