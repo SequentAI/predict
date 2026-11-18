@@ -5,6 +5,8 @@
 #include "format.cpp"
 #include "tfidf.cpp"
 
+// A predictor refers to the corpus tables it is given, without copying them:
+// they must outlive it, and a change to them needs a new predictor.
 class Predictor {
   public:
     Predictor(const LVecVec& deps, const LVecVec& syms,
@@ -21,7 +23,8 @@ class Predictor {
     virtual LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
 
-    void set_tables(SVec no_th, SVec no_sym, SLMap th_no, HLMap sym_no);
+    void set_tables(const SVec& no_th, const SVec& no_sym, const SLMap& th_no,
+      const HLMap& sym_no);
 
     virtual void import_data(string location) {}
     virtual void export_data(string location) const {}
@@ -43,14 +46,14 @@ class Predictor {
 
     const vector<char>* scope = nullptr;
 
-    LVecVec deps,         // dependencies of each theorem
-            syms,         // syms[t] holds the symbols of a theorem t
-            sym_ths;      // sym_ths[s] holds the theorems which contain s
+    const LVecVec &deps,     // dependencies of each theorem
+                  &syms,     // syms[t] holds the symbols of a theorem t
+                  &sym_ths;  // sym_ths[s] holds the theorems which contain s
 
-    SVec no_th,
-         no_sym;
-    SLMap th_no;
-    HLMap sym_no;
+    const SVec *no_th = nullptr,
+               *no_sym = nullptr;
+    const SLMap* th_no = nullptr;
+    const HLMap* sym_no = nullptr;
 
   private:
     void print_answer(long no_adv);
@@ -83,11 +86,12 @@ long Predictor::keep_visible(LDPairVec& ans, long no_adv) const {
   return min(no_adv, (long)ans.size());
 }
 
-void Predictor::set_tables(SVec no_th, SVec no_sym, SLMap th_no, HLMap sym_no) {
-  this->no_th  = no_th;
-  this->no_sym = no_sym;
-  this->th_no  = th_no;
-  this->sym_no = sym_no;
+void Predictor::set_tables(const SVec& no_th, const SVec& no_sym,
+  const SLMap& th_no, const HLMap& sym_no) {
+  this->no_th  = &no_th;
+  this->no_sym = &no_sym;
+  this->th_no  = &th_no;
+  this->sym_no = &sym_no;
 }
 
 // higher scores first; equal scores in theorem order, so that rankings do
