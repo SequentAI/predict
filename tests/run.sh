@@ -1154,7 +1154,8 @@ if [ -n "$msg" ]; then fail "-L alone ranks as before" "differ for $msg"; else o
 # after it is replaced, "u" is a feature no theorem has. With -P, on a typed
 # copy of the fixture: only the added Down theorems have the type "k$set",
 # Script.s3 alone has "w", as a frequency-only token, and Down.d2 alone has
-# "x", as one, which stays after the replacement.
+# "x", as one, which stays after the replacement. Base.b1 is local, so a
+# query left with no known symbol starts from its symbols.
 number=42
 # part <from> <to> <pattern>: the theorems of corpus <from> matching the grep
 # pattern, as files $WORK/<to>.{seq,syms,deps,thy}
@@ -1191,7 +1192,8 @@ for c in "" t; do
   for f in seq syms deps thy; do cat "$WORK/${c}new.$f" >> "$WORK/${c}kept.$f"; done
 done
 queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
-typed_queries=$'"p"<c 1 "k$set">, "q"\n"u"<v 0>, "p"<c 1 "k$num">@0.5\n"w", "q"@0.5\n"x", "p"@0.5'
+typed_queries=$'"p"<c 1 "k$set">, "q"\n"u"<v 0>, "p"<c 1 "k$num">@0.5\n"w", "q"@0.5\n"x", "p"@0.5\n"u"<v 0>\n"w"'
+printf 'Base.b1:local\n' > "$WORK/tdag.statures"
 # same_as_fresh <c> <queries> <options...>: sets msg unless predict with the
 # options, started on corpus <c>up, answers the queries after `!add <c>down`
 # and after `!replace Script <c>new` as when started on <c>dag and <c>kept
@@ -1215,7 +1217,7 @@ for m in $methods rforest; do
   [ -n "$msg" ] && break
   same_as_fresh "" "$queries" -p $m
 done
-[ -n "$msg" ] || same_as_fresh t "$queries"$'\n'"$typed_queries" -p mepo -P
+[ -n "$msg" ] || same_as_fresh t "$queries"$'\n'"$typed_queries" -p mepo -P -F "$WORK/tdag.statures"
 if [ -n "$msg" ]; then fail "!add and !replace" "$msg"; else ok "!add and !replace"; fi
 
 # 43. malformed scopes and commands are errors, commands need a corpus that
