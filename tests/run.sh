@@ -1148,7 +1148,7 @@ part kept '^(Base|Mid|Other|Down)\.'
 for f in seq syms deps thy; do cat "$WORK/new.$f" >> "$WORK/kept.$f"; done
 queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
 msg=
-for m in $methods; do
+for m in $methods rforest; do
   out=$(run up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
 !add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy
 $queries
