@@ -1507,7 +1507,10 @@ if [ -n "$msg" ]; then fail "bad versions and views" "$msg"; else ok "bad versio
 # theorems have the features of theorems 1500 places later, stored last.
 # Its theorems include ones with more than 20 dependencies, dependencies on
 # later theorems and on theorems of S4, and equal features; naive Bayes adds
-# a theorem's counts up in the order the process learned them.
+# a theorem's counts up in the order the process learned them. MePo's
+# filter, which scores the theorems again after each batch it accepts, takes
+# minutes for 300 predictions on the checked build, so mepo and mesh predict
+# 50, and mepo -P answers 3 plain and 2 scoped queries.
 number=47
 LIMIT=600
 msg=
@@ -1525,15 +1528,20 @@ stored=(S1a S2a S3a S4a S5a S0b)
 printf 'S%s a\n' 1 2 3 5 > "$WORK/s.view"
 echo 'S0 b' >> "$WORK/s.view"
 fresh s S1a S2a S3a S5a S0b
-{
-  cat "$WORK/synth.wqueries"
-  head -5 "$WORK/synth.queries" | sed 's/^/[theory=S3 before=200 exclude=S5]/'
-} > "$WORK/s.queries"
+scoped=$(head -5 "$WORK/synth.queries" | sed 's/^/[theory=S3 before=200 exclude=S5]/')
+{ cat "$WORK/synth.wqueries"; echo "$scoped"; } > "$WORK/s.queries"
+{ head -3 "$WORK/synth.wqueries"; head -2 <<<"$scoped"; } > "$WORK/s.few"
 for m in "${view_methods[@]}"; do
-  out=$(note='with a view of the synthetic corpus' checked one -p $m -n 300 -S <<<"$(for v in "${stored[@]}"; do echo "!version ${v%?} ${v: -1} $WORK/$v.syms $WORK/$v.deps $WORK/$v.seq $WORK/$v.thy"; done)
+  n=300
+  qs=$WORK/s.queries
+  case $m in
+    mepo|mesh) n=50 ;;
+    "mepo -P") n=50; qs=$WORK/s.few ;;
+  esac
+  out=$(note='with a view of the synthetic corpus' checked one -p $m -n $n -S <<<"$(for v in "${stored[@]}"; do echo "!version ${v%?} ${v: -1} $WORK/$v.syms $WORK/$v.deps $WORK/$v.seq $WORK/$v.thy"; done)
 !view s $WORK/s.view
-$(sed 's/^\[/[view=s /; t; s/^/[view=s]/' "$WORK/s.queries")" | tail -n +8)
-  want=$(checked s -p $m -L "$WORK/s.thy" -n 300 -S < "$WORK/s.queries")
+$(sed 's/^\[/[view=s /; t; s/^/[view=s]/' "$qs")" | tail -n +8)
+  want=$(checked s -p $m -L "$WORK/s.thy" -n $n -S < "$qs")
   if [ -z "$want" ] || [ "$out" != "$want" ]; then
     msg="$m: the view's rankings differ from a fresh process's"
     break
