@@ -156,7 +156,18 @@ LDPairVec MaShView::predict_weighted(const LDPairVec& query,
 
 // MePo and MaSh, weighted 0.5 each (Isabelle's relevant_facts). For M
 // predictions, MePo is cut to its first M theorems and MaSh to 2M + 25; with
-// [over], both are cut to 51M/50.
+// [over], both are cut to 51M/50. [mepo](n) and [mash](n) give the first n
+// theorems of each. Unsorted, as mesh_facts.
+template <class MePoFirst, class MaShFirst>
+LDPairVec mesh_fusion(long maxth, long no_adv, bool over, MePoFirst mepo,
+  MaShFirst mash) {
+  const long n_mepo = over ? no_adv * 51 / 50 : no_adv;
+  const long n_mash = over ? no_adv * 51 / 50 : 2 * no_adv + 25;
+  return mesh_facts({{0.5, mepo(n_mepo)}, {0.5, mash(n_mash)}}, maxth,
+    no_adv);
+}
+
+// mesh_fusion's ranking of the theorems of the process
 class MeSh : public Predictor {
   public:
     MeSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
@@ -201,11 +212,9 @@ LDPairVec MeSh::predict(const LVec& csyms, long maxth, long no_adv) const {
 
 LDPairVec MeSh::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
-  const long n_mepo = over ? no_adv * 51 / 50 : no_adv;
-  const long n_mash = over ? no_adv * 51 / 50 : 2 * no_adv + 25;
-  LDPairVec ans = mesh_facts({{0.5, first_ids(mepo, query, maxth, n_mepo)},
-                              {0.5, first_ids(mash, query, maxth, n_mash)}},
-    maxth, no_adv);
+  LDPairVec ans = mesh_fusion(maxth, no_adv, over,
+    [&](long n) { return first_ids(mepo, query, maxth, n); },
+    [&](long n) { return first_ids(mash, query, maxth, n); });
   sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
 }
@@ -235,11 +244,9 @@ MeShView::MeShView(const View& view, long sym_num, long max_deps,
 LDPairVec MeShView::predict_weighted(const LDPairVec& query,
   const vector<char>* in_scope, long no_adv) const {
   const long n = view.size();
-  const long n_mepo = over ? no_adv * 51 / 50 : no_adv;
-  const long n_mash = over ? no_adv * 51 / 50 : 2 * no_adv + 25;
-  LDPairVec ans = mesh_facts(
-    {{0.5, first_ids(mepo, query, in_scope, n, n_mepo)},
-     {0.5, first_ids(mash, query, in_scope, n, n_mash)}}, n, no_adv);
+  LDPairVec ans = mesh_fusion(n, no_adv, over,
+    [&](long m) { return first_ids(mepo, query, in_scope, n, m); },
+    [&](long m) { return first_ids(mash, query, in_scope, n, m); });
   sort_prediction(ans, keep_in_scope(ans, in_scope, no_adv));
   return ans;
 }
