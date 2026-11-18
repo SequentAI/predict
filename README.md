@@ -177,7 +177,8 @@ among the usable theorems only, as Isabelle's MaSh does when it selects the
 visible facts before ranking (`select_fact_idxs` in
 `src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML`).
 
-Scopes need each theorem's theory, given with `-L <theories>`:
+Scopes of the default view need each theorem's theory, given with `-L
+<theories>` (a view's versions bring their own, see "Versions and views"):
 
 ```
 id:theory
@@ -197,6 +198,8 @@ A query line may begin with a scope in square brackets, before its features:
 
 Each key may appear once, in any order, and each may be left out:
 
+- `view=V`: the query ranks the theorems of view `V` (see below), and the
+  other keys apply within it.
 - `k=n`: the number of predictions for this query (at least 1), instead of
   `-n`'s.
 - `theory=T`: the query's own theory. Its private theorems may be predicted.
@@ -212,8 +215,9 @@ Each key may appear once, in any order, and each may be left out:
   theories; equal weights keep their order. The first `k` of them are
   printed, with `-S` each with the score it had before.
 
-Theories no theorem has may be named. A query with a scope (even `[]`) never
-predicts private theorems of theories other than its `theory`. A query
+Theories no theorem has may be named. A query with a scope (even `[]`, but
+not `[view=V]` alone, below) never predicts private theorems of theories
+other than its `theory`. A query
 without one ranks as it does without `-L`.
 
 A theorem out of scope is treated as the `-e` mode treats the theorems after
@@ -245,9 +249,63 @@ an added one is not read again, so it is missing, as with snapshots
 `predict` then learns the whole corpus again, so that it ranks as a process
 started on the changed corpus would, up to rounding (features may be
 numbered otherwise, which changes the order of some sums), and prints the
-number of theorems in the corpus. With `-P`, the files' types and
+number of theorems the process holds (see "Versions and views"). With `-P`, the files' types and
 frequency-only tokens are read too. Commands work neither with `-x` nor with
 `-y`.
+
+### Versions and views
+
+One process can also rank several variants of a library, such as the
+library as each of several copies of a script edits it. It stores *versions*
+of theories, and a *view* picks one version for each of some theories:
+
+```
+!version <theory> <id> <syms> <deps> <seq> <theories>
+!view <view> <file>
+!drop <view>
+```
+
+`!version` stores a version of `<theory>` under the caller's `<id>` (no
+spaces), its theorems read from the four files, in the formats above. Every
+theorem of `<seq>` must have a line in `<theories>`, of `<theory>`. Storing a
+version of a theory under an id already stored is an error.
+
+`!view` creates the view `<view>` (a name like a theory's), or changes it,
+from the lines of `<file>`: `<theory> <id>` sets the theory's version, and
+`<theory>` alone removes the theory from the view. A line naming a version
+that is not stored is an error, and so is a view whose theories would share
+a theorem id, as two theorems with one id are in `<seq>`. `!drop` removes a view. After each `!view`
+and `!drop`, the versions no view uses are dropped, so a version is stored
+right before the `!view` that uses it.
+
+A query whose scope has `view=V` ranks exactly as a process started on the
+theorems of `V` would rank it, with `-L` giving their theories: the theorems
+of `V`'s versions, in the order the versions were stored, each version's in
+`<seq>` order. So equal scores are ranked in that order, `before=n` counts
+the theorems of `V`'s version of the theory, a dependency names a theorem
+and means `V`'s version of it, a query feature that no theorem of `V` has is
+dropped, and the statistics (IDF, ...) are learned from `V`'s theorems
+alone. `[view=V]` alone ranks as a query without a scope; other keys make a
+scope within `V`. A view that does not exist is an error.
+
+The theorems read at start-up and by `!add` and `!replace` form the default
+view, which queries without `view=` rank, as before. Named views hold only
+versions, never the default view's theorems, and storing versions changes
+nothing for the default view.
+
+Every command prints the number of theorems the process holds, in the
+default view and in every stored version. A command that cannot be run (a
+wrong number of arguments, a file that cannot be read) is an error before
+anything changes. Versions have no `-F` flags. As with `!add` and
+`!replace`, the commands work neither with `-x` nor with `-y`.
+
+So far only `cosine` and `cosine-dense` have views; the other methods refuse
+the commands and `view=` with an error. For `cosine`, each theorem's
+features are stored once per version, and each view has its own IDF table,
+over the features of its theorems, and the norm of each of its theorems.
+
+`tests/views.py` measures the memory and the view changes of a process on a
+synthetic corpus written by `tests/gen.py`.
 
 ## Methods
 
@@ -396,6 +454,8 @@ scores equal.
   known by a hash of their text.
 - Queries may carry scopes (`-L`, `-b`), and `!add` and `!replace` change the
   corpus of a running process.
+- A process may hold versions of theories and views of them (`!version`,
+  `!view`, `!drop`, `view=`).
 
 ## Provenance and licence
 

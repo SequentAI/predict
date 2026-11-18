@@ -1,6 +1,7 @@
 #ifndef SCOPE_CPP
 #define SCOPE_CPP
 
+#include <functional>
 #include <unordered_set>
 #include "mesh.cpp"
 #include "snapshot.cpp"
@@ -72,14 +73,18 @@ void read_theories(const string& fname, const SLMap& th_no,
   }
 }
 
-// The scope of a query: [k] predictions (-1 for -n's), none of [exclude]'s
-// theorems, nor private ones unless of [theory], nor [theory]'s past its
-// first [before] (-1 for none past); [ancestors]' theorems are boosted.
+// The scope of a query: the theorems of [view] (the process's if empty),
+// [k] predictions (-1 for -n's), none of [exclude]'s theorems, nor private
+// ones unless of [theory], nor [theory]'s past its first [before] (-1 for
+// none past); [ancestors]' theorems are boosted. [limits] says whether it has
+// a key other than view.
 struct Scope {
+  string view;
   long k = -1;
   string theory;
   long before = -1;
   vector<string> exclude, ancestors;
+  bool limits = false;
 };
 
 long scope_number(const string& key, const string& value,
@@ -108,7 +113,7 @@ vector<string> scope_theories(const string& key, const string& value,
 }
 
 /* Parses the scope that may begin a query line,
-   [k=8 theory=T before=3 exclude=A,B ancestors=C,D]
+   [view=V k=8 theory=T before=3 exclude=A,B ancestors=C,D]
    each key at most once, in any order, into [scope]; returns the position
    after it, 0 if the line has none. */
 size_t parse_scope(const string& line, Scope& scope) {
@@ -131,7 +136,13 @@ size_t parse_scope(const string& line, Scope& scope) {
     const string value = eq == string::npos ? "" : item.substr(eq + 1);
     if (eq == string::npos || !seen.insert(key).second)
       exit_error("Bad scope item `" + item + "' in query `" + line + "'!");
-    if (key == "k") scope.k = scope_number(key, value, line);
+    scope.limits = scope.limits || key != "view";
+    if (key == "view") {
+      if (!valid_theory(value))
+        exit_error("Bad view `" + value + "' in query `" + line + "'!");
+      scope.view = value;
+    }
+    else if (key == "k") scope.k = scope_number(key, value, line);
     else if (key == "before") scope.before = scope_number(key, value, line);
     else if (key == "theory") {
       if (!valid_theory(value))
@@ -170,17 +181,14 @@ vector<char> scope_mask(const Scope& scope, const Theories& theories) {
 }
 
 // Re-ranks [ans] by the weight of each rank r (from 0), steep_weight(r),
-// times [boost] for a theorem of one of [scope]'s ancestors; equal weights
-// keep their order.
-void boost_ancestors(LDPairVec& ans, const Scope& scope,
-                     const Theories& theories, double boost) {
-  unordered_set<long> anc;
-  for (const auto& t : scope.ancestors) anc.insert(theories.find(t));
-  anc.erase(-1);
+// times [boost] for a theorem i with ancestor(i) set; equal weights keep
+// their order.
+void boost_ancestors(LDPairVec& ans, const function<bool(long)>& ancestor,
+                     double boost) {
   vector<pair<double, long> > weighted;
   for (long r = 0; r < (long)ans.size(); ++r)
     weighted.push_back(make_pair(steep_weight(r) *
-      (anc.count(theories.of[ans[r].first]) ? boost : 1.0), r));
+      (ancestor(ans[r].first) ? boost : 1.0), r));
   stable_sort(weighted.begin(), weighted.end(),
     [](const pair<double, long>& a, const pair<double, long>& b) {
       return a.first > b.first; });

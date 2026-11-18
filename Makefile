@@ -8,7 +8,7 @@ COMMIT_FLAG := $(if $(COMMIT),-DPREDICT_COMMIT='"$(COMMIT)"')
 
 SOURCES = main.cpp format.cpp predictor.cpp tfidf.cpp knn.cpp mepo.cpp \
           mepo_cosine.cpp cosine.cpp nbayes.cpp mesh.cpp rforest.cpp dtree.cpp \
-          snapshot.cpp scope.cpp
+          snapshot.cpp scope.cpp view.cpp versions.cpp
 
 predict: $(SOURCES)
 	$(CXX) $(CXXFLAGS) $(COMMIT_FLAG) main.cpp -o $@
