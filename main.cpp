@@ -11,8 +11,13 @@
 #include "scope.cpp"
 #include "snapshot.cpp"
 
-// Raise with every change to rankings, options or formats.
-const string version_str = "0.8.0";
+// The commit predict was built from: the Makefile defines it in a clone, and
+// git archive writes it below (.gitattributes) in a source archive.
+#ifndef PREDICT_COMMIT
+#define PREDICT_COMMIT "$Format:%H$"
+#endif
+const string version_str =
+  string(PREDICT_COMMIT).rfind("$Format", 0) == 0 ? "unknown" : PREDICT_COMMIT;
 
 const string usage_str =
   "Usage: predict <syms> <deps> <seq> [OPTION]...\n"
@@ -60,7 +65,7 @@ const string usage_str =
   "Methods nbayes-dense and cosine-dense compute the rankings of nbayes and\n"
   "cosine by scanning every theorem; they are slow references for the tests.\n"
   "\n"
-  "predict --version prints the version.\n";
+  "predict --version prints the commit predict was built from.\n";
 
 
 void print_prediction(LDPairVec prediction, long n_predictions,

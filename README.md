@@ -23,9 +23,12 @@ them, and `make golden` rewrites them after an intended ranking change. The test
 that `nbayes` and `cosine` rank exactly as `nbayes-dense` and `cosine-dense`,
 which compute the same scores, up to rounding, by scanning every theorem, on
 the test corpus and on a synthetic corpus that `tests/gen.py` writes (the
-tests need `python3`). The version string in
-`main.cpp` is raised by every change to rankings, options or formats, so a
-build from a source archive still says what it is.
+tests need `python3`).
+
+`predict --version` prints the commit `predict` was built from. In a clone,
+`make` asks git for it; a source archive made by `git archive`, as GitHub's
+are, has it written into `main.cpp` (see `.gitattributes`). A build that has
+neither says `unknown`.
 
 ## Usage
 
@@ -58,8 +61,8 @@ corpus with the added theorems to a new snapshot. Neither works with `-P`.
 
 A snapshot holds the theorem names, the features' hashes (below) and the
 numbers `predict` gives theorems and features, and nothing learned: learning
-is fast next to reading. It can be read only by the version of `predict` that
-wrote it. If the snapshot was written by another version, is truncated, or is
+is fast next to reading. It can be read only by a `predict` built from the
+commit that wrote it. If the snapshot was written by another build, is truncated, or is
 not a snapshot, `predict` says why on standard error and exits with status 3
 before reading anything else, so that a caller can fall back to the text
 files. Since a snapshot holds no feature names, `rforest` cannot export its
@@ -387,7 +390,7 @@ scores equal.
   `mepo-cosine`. `-F` gives `mepo` the theorems' statures, and `-P` makes it
   match symbols by their types.
 - `knn` sorts only as many neighbours as it needs.
-- `-S` prints scores; `--version` prints the version.
+- `-S` prints scores; `--version` prints the commit `predict` was built from.
 - `-o` and `-i` write and read snapshots of the corpus, and features are
   known by a hash of their text.
 - Queries may carry scopes (`-L`, `-b`), and `!add` and `!replace` change the
