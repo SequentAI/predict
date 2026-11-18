@@ -18,11 +18,18 @@ trap 'rm -rf "$WORK"' EXIT
 failures=0
 number=0
 
-# a test passes only if none of its checked runs exited non-zero
-ok() {
-  if [ -s "$WORK/failed" ]; then fail "$1" "$(head -n 1 "$WORK/failed")"; else echo "ok $number - $1"; fi
+# a test passes only if none of its checked runs exited non-zero; a failure
+# names the first such run
+ok() { if [ -s "$WORK/failed" ]; then fail "$1"; else echo "ok $number - $1"; fi; }
+fail() {
+  local why=${2:-}
+  if [ -s "$WORK/failed" ]; then
+    why="${why:+$why; }$(head -n 1 "$WORK/failed")"
+    rm "$WORK/failed"
+  fi
+  echo "FAIL $number - $1: $why"
+  failures=$((failures + 1))
 }
-fail() { echo "FAIL $number - $1: $2"; failures=$((failures + 1)); rm -f "$WORK/failed"; }
 
 # run <name> <options...> < query: runs predict on a corpus written in
 # $WORK/<name>.{syms,deps,seq}, with a limit of $LIMIT seconds (default 5)
@@ -35,11 +42,12 @@ run() {
 
 # checked <name> <options...> < query: run, for a run that must succeed; a
 # non-zero exit status, which output piped on or captured in $(...) hides,
-# is written to $WORK/failed and fails the test
+# is written to $WORK/failed and fails the test. $note, if set, tells the
+# run from others with the same options.
 checked() {
   run "$@"
   local status=$?
-  [ $status -eq 0 ] || echo "'$*' exited with status $status" >> "$WORK/failed"
+  [ $status -eq 0 ] || echo "'$*'${note:+ ($note)} exited with status $status" >> "$WORK/failed"
   return $status
 }
 
@@ -1162,7 +1170,7 @@ for f in seq syms deps thy; do cat "$WORK/new.$f" >> "$WORK/kept.$f"; done
 queries=$'"p", "q"\n[theory=Script exclude=Down]"p", "r"@0.5\n"u", "v"\n"t"'
 msg=
 for m in $methods rforest; do
-  out=$(checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
+  out=$(note='with !add and !replace' checked up -p $m -L "$WORK/up.thy" -n 20 -S <<<"$queries
 !add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy
 $queries
 !replace Script $WORK/new.syms $WORK/new.deps $WORK/new.seq $WORK/new.thy
