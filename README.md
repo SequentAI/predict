@@ -299,10 +299,15 @@ wrong number of arguments, a file that cannot be read) is an error before
 anything changes. Versions have no `-F` flags. As with `!add` and
 `!replace`, the commands work neither with `-x` nor with `-y`.
 
-So far only `cosine` and `cosine-dense` have views; the other methods refuse
-the commands and `view=` with an error. For `cosine`, each theorem's
-features are stored once per version, and each view has its own IDF table,
-over the features of its theorems, and the norm of each of its theorems.
+So far `cosine`, `cosine-dense`, `knn`, `mepo-cosine`, `nbayes`,
+`nbayes-dense` and `mash` have views; the other methods refuse the commands
+and `view=` with an error. Each theorem's features and dependencies are
+stored once per version, and each view has what its method learns from the
+view's theorems: its own IDF table, over the features of its theorems, and
+for `cosine` the norm of each of its theorems; for `nbayes`, the theorems
+that learn each theorem's features as a dependency (`-d` applies per view),
+and each theorem's baseline and the postings (`nbayes-dense`: each theorem's
+counts); `mash` has those of `knn` and `nbayes`.
 
 `tests/views.py` measures the memory and the view changes of a process on a
 synthetic corpus written by `tests/gen.py`.

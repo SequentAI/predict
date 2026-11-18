@@ -112,6 +112,44 @@ LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
   return ans;
 }
 
+// MaSh's ranking of the theorems of a view, from its parts' views, as MaSh
+// ranks in a process started on them.
+class MaShView : public ViewPredictor {
+  public:
+    MaShView(const View& view, long sym_num, long max_deps, bool credit_deps);
+
+    LDPairVec predict_weighted(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    const View& view;
+    kNNView knn;
+    NaiveBayesView nbayes;
+};
+
+MaShView::MaShView(const View& view, long sym_num, long max_deps,
+  bool credit_deps)
+: view(view), knn(view, sym_num, credit_deps),
+  nbayes(view, sym_num, max_deps, false) {}
+
+LDPairVec MaShView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  const long n = view.size();
+  // as first_ids
+  const auto first = [&](const ViewPredictor& p) {
+    const long m = min(no_adv, n);
+    const LDPairVec ans = p.predict_weighted(query, in_scope, m);
+    LVec ids;
+    for (long j = 0; j < min(m, (long)ans.size()); ++j)
+      ids.push_back(ans[j].first);
+    return ids;
+  };
+  LDPairVec ans = mesh_facts({{0.5, first(nbayes)}, {0.5, first(knn)}}, n,
+    no_adv);
+  sort_prediction(ans, keep_in_scope(ans, in_scope, no_adv));
+  return ans;
+}
+
 // MePo and MaSh, weighted 0.5 each (Isabelle's relevant_facts). For M
 // predictions, MePo is cut to its first M theorems and MaSh to 2M + 25; with
 // [over], both are cut to 51M/50.

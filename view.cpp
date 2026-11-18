@@ -86,6 +86,30 @@ struct View {
     return table;
   }
 
+  // the number in the view of each theorem id numbered up to the largest of
+  // the view's theorems, -1 for the ids of no theorem of the view
+  LVec id_table() const {
+    long top = -1;
+    for (const auto v : versions)
+      for (const auto id : v->ids) top = max(top, id);
+    LVec table(top + 1, -1);
+    for (size_t v = 0; v < versions.size(); ++v)
+      for (size_t j = 0; j < versions[v]->ids.size(); ++j)
+        table[versions[v]->ids[j]] = first[v] + j;
+    return table;
+  }
+
+  // the dependencies of theorem i that are theorems of the view, numbered
+  // in it, in order, as a process started on the view's theorems reads them;
+  // [table] is id_table()
+  LVec deps_of(long i, const LVec& table) const {
+    const auto at = locate(i);
+    LVec out;
+    for (const auto d : at.first->deps[at.second])
+      if (d < (long)table.size() && table[d] >= 0) out.push_back(table[d]);
+    return out;
+  }
+
   // Sets versions, first and ranks from chosen, for the sym_num features of
   // the versions.
   void arrange(long sym_num) {
@@ -108,5 +132,23 @@ struct View {
     ranks = move(compact);
   }
 };
+
+// Drops the theorems not in scope from [ans], if [in_scope] is set; returns
+// no_adv, or the number left if fewer (as Predictor::keep_visible).
+inline long keep_in_scope(LDPairVec& ans, const vector<char>* in_scope,
+  long no_adv) {
+  if (in_scope)
+    ans.erase(remove_if(ans.begin(), ans.end(),
+      [&](const pair<long, double>& p) { return !(*in_scope)[p.first]; }),
+      ans.end());
+  return min(no_adv, (long)ans.size());
+}
+
+// the ranks of features [syms] in [table] (View::rank_table)
+inline LVec ranks_in(const LVec& syms, const LVec& table) {
+  LVec out;
+  for (const auto f : syms) out.push_back(table[f]);
+  return out;
+}
 
 #endif

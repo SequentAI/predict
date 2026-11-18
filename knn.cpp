@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "predictor.cpp"
+#include "view.cpp"
 
 class kNN : public Predictor {
   public:
@@ -32,28 +33,16 @@ inline double age(long k) {
   return 500000000 - 100 * k;
 }
 
-LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
-  LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
-
-  // initialise theorem importance matrix
-  for (long i = 0; i < maxth; ++i) {
-    ans[i].first = i; ans[i].second = 0;
-  }
-
-  // for each symbol, increase the importance of the theorems which contain
-  // the symbol by a given symbol weight
-  for (const auto& sym : csyms) {
-    const LVec& ths = sym_ths[sym];
-    double weight = tfidf.get(sym);
-    for (const auto& th : ths) {
-      if (visible(th, maxth)) ans[th].second += pow(weight, 6);
-    }
-  }
-
+// The k-NN ranking: [ans] holds (i, 0) for each theorem i, [neighbours] the
+// similarity to the query of each theorem that may be predicted;
+// [deps_of](i) gives the dependencies of theorem i, and [visible](i) whether
+// it may be predicted.
+template <class DepsOf, class Visible>
+void credit_neighbours(LDPairVec& ans, LDPairVec neighbours, long no_adv,
+  bool credit_deps, DepsOf deps_of, Visible visible) {
   // neighbours[0, sorted) are the best neighbours in order; the loop below
   // usually needs few of them, so they are sorted on demand
-  LDPairVec neighbours(ans);
-  const long n_neighbours = keep_visible(neighbours, maxth);
+  const long n_neighbours = neighbours.size();
   long sorted = 0;
   for (auto& a : ans) a.second = 0;
 
@@ -87,11 +76,12 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
 
     // dependencies of the neighbor also gain some relevance, depending on the
     // number of dependencies of the current theorem
-    const LVec& ds = deps[nn];
-    if (!credit_deps || ds.empty()) continue;
+    if (!credit_deps) continue;
+    const LVec& ds = deps_of(nn);
+    if (ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
-      if (visible(d, maxth)) { // in case of future dependencies, do not predict them
+      if (visible(d)) { // in case of future dependencies, do not predict them
         if (ans[d].second <= 0) {
           no_recommends++;
           ans[d].second = age(k) + ol;
@@ -101,7 +91,85 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
       }
     }
   }
+}
+
+LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
+  LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
+
+  // initialise theorem importance matrix
+  for (long i = 0; i < maxth; ++i) {
+    ans[i].first = i; ans[i].second = 0;
+  }
+
+  // for each symbol, increase the importance of the theorems which contain
+  // the symbol by a given symbol weight
+  for (const auto& sym : csyms) {
+    const LVec& ths = sym_ths[sym];
+    double weight = tfidf.get(sym);
+    for (const auto& th : ths) {
+      if (visible(th, maxth)) ans[th].second += pow(weight, 6);
+    }
+  }
+
+  LDPairVec neighbours(ans);
+  keep_visible(neighbours, maxth);
+  credit_neighbours(ans, move(neighbours), no_adv, credit_deps,
+    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return visible(i, maxth); });
 
   sort_prediction(ans, keep_visible(ans, no_adv));
+  return ans;
+}
+
+// kNN's ranking of the theorems of a view, computed as kNN computes it in a
+// process started on them: with the view's IDF, crediting a neighbour's
+// dependencies that are theorems of the view.
+class kNNView : public ViewPredictor {
+  public:
+    kNNView(const View& view, long sym_num, bool credit_deps);
+
+    LDPairVec predict_weighted(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    const View& view;
+    bool credit_deps;
+    Tfidf tfidf;  // by rank
+    LVec ids;     // View::id_table
+};
+
+kNNView::kNNView(const View& view, long sym_num, bool credit_deps)
+: view(view), credit_deps(credit_deps), tfidf(view.features()),
+  ids(view.id_table()) {
+  const LVec table = view.rank_table(sym_num);
+  for (const auto v : view.versions)
+    for (const auto& s : v->syms) tfidf.add(ranks_in(s, table));
+}
+
+LDPairVec kNNView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  const auto visible = [&](long i) { return !in_scope || (*in_scope)[i]; };
+  const long n = view.size();
+  LDPairVec ans(n);
+  for (long i = 0; i < n; ++i) ans[i] = make_pair(i, 0.0);
+
+  // as in kNN::predict, a feature's weight added in query order
+  for (const auto& fw : query) {
+    const double weight = tfidf.get(view.rank_of(fw.first));
+    for (size_t v = 0; v < view.versions.size(); ++v) {
+      const auto ths = view.versions[v]->theorems_of(fw.first);
+      for (auto th = ths.first; th != ths.second; ++th) {
+        const long i = view.first[v] + *th;
+        if (visible(i)) ans[i].second += pow(weight, 6);
+      }
+    }
+  }
+
+  LDPairVec neighbours(ans);
+  keep_in_scope(neighbours, in_scope, n);
+  credit_neighbours(ans, move(neighbours), no_adv, credit_deps,
+    [&](long i) { return view.deps_of(i, ids); }, visible);
+
+  sort_prediction(ans, keep_in_scope(ans, in_scope, no_adv));
   return ans;
 }

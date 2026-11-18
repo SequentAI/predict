@@ -2,6 +2,7 @@
 #include <map>
 #include <set>
 #include "predictor.cpp"
+#include "view.cpp"
 
 typedef long feature_t;
 typedef long sample_t;
@@ -168,12 +169,12 @@ LDPairVec NaiveBayes::predict_weighted(const LDPairVec &query, sample_t maxth,
 }
 
 // Given the sparse scores without C in [ans], puts the best [no_adv] first,
-// in score()'s order. Scores within [margin] of their neighbours may be in
-// the other order under score(), so each run of such scores is scored again
-// with score() and sorted; a run reaching the cutoff is followed into the
-// rest of [ans].
-void NaiveBayes::settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
-  double c) const {
+// in the order of [score](i), score()'s score of theorem i. Scores within
+// [margin] of their neighbours may be in the other order under score(), so
+// each run of such scores is scored again with score() and sorted; a run
+// reaching the cutoff is followed into the rest of [ans].
+template <class Score>
+void settle_nbayes(LDPairVec& ans, long no_adv, double c, Score score) {
   if (no_adv == 0)
     return;
   sort_prediction(ans, no_adv);
@@ -185,7 +186,6 @@ void NaiveBayes::settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
     [&](const pair<long, double>& p) { return p.second >= cutoff - margin; });
   sort(ans.begin() + no_adv, end, sortfun);
 
-  const map<feature_t, double> symh(query.begin(), query.end());
   auto run = ans.begin();
   while (run < ans.begin() + no_adv) {
     auto next = run + 1;
@@ -195,18 +195,24 @@ void NaiveBayes::settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
       run->second -= c;
     else {
       for (auto p = run; p < next; ++p)
-        p->second = score(p->first, symh);
+        p->second = score(p->first);
       sort(run, next, sortfun);
     }
     run = next;
   }
 }
 
-double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
-  // number of times current theorem was used as dependency
-  const long n      = tfreq[i];
-  const auto sfreqh = sfreq[i];
+void NaiveBayes::settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
+  double c) const {
+  const map<feature_t, double> symh(query.begin(), query.end());
+  settle_nbayes(ans, no_adv, c, [&](long i) { return score(i, symh); });
+}
 
+// The score of a theorem used [n] times as a dependency, with feature counts
+// [sfreqh] (its sfreq), for the query features and weights [symh]; adds the
+// counts up in sfreqh's order.
+double score_nbayes(long n, const unordered_map<feature_t, long>& sfreqh,
+  map<feature_t, double> symh, const Tfidf& tfidf) {
   double s = 30 * log(n);
 
   for (const auto& sv : sfreqh) {
@@ -232,6 +238,10 @@ double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
   return s;
 }
 
+double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
+  return score_nbayes(tfreq[i], sfreq[i], move(symh), tfidf);
+}
+
 void add_sym(unordered_map <feature_t, long> &m, feature_t sym, long w) {
   auto itr = m.find(sym);
   if (itr == m.end()) m[sym]  = w;
@@ -248,4 +258,202 @@ void NaiveBayes::learn(const LVec& csyms, sample_t i, const LVec& cdeps) {
   const size_t n = max_deps > 0 ? min(cdeps.size(), (size_t)max_deps)
                                 : cdeps.size();
   for (size_t k = 0; k < n; ++k) add_sample_freqs(csyms, cdeps[k], 1);
+}
+
+// NaiveBayes's ranking of the theorems of a view, computed as NaiveBayes
+// computes it in a process started on them: with the view's IDF and the
+// counts the view's theorems give, numbering features by their rank in the
+// view. Unless [dense], a theorem's counts are not stored: they are its own
+// features and those of the theorems learning it as a dependency, which
+// score() adds up again as the process does.
+class NaiveBayesView : public ViewPredictor {
+  public:
+    // as NaiveBayes's [max_deps] and [dense]
+    NaiveBayesView(const View& view, long sym_num, long max_deps, bool dense);
+
+    LDPairVec predict_weighted(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    // theorem i's sfreq, as the process builds it, in the same order, so
+    // that it is iterated in the same order
+    unordered_map<feature_t, long> sfreq(long i) const;
+    double score(long i, map<feature_t, double> symh) const;
+    // adds the features of theorem j to [m] with weight [w], as add_sym does
+    void add(unordered_map<feature_t, long>& m, long j, long w) const;
+    // theorem i's counts (sfreq) in rank order; [acc] is zero for each
+    // feature, as it is left
+    vector<pair<feature_t, long> > counts(long i, LVec& acc) const;
+    // NaiveBayes::index, for the view
+    void index();
+
+    const View& view;
+    LVec ranks;   // View::rank_table
+    Tfidf tfidf;  // by rank
+    bool dense;
+    // The theorems learning the features of theorem i, with weight 1 each,
+    // are users[user_start[i]], ..., users[user_start[i + 1] - 1], in the
+    // order the process learns them (once for each time).
+    LVec user_start, users;
+
+    // with [dense], each theorem's sfreq, which every query reads;
+    // otherwise, as NaiveBayes's, by rank
+    vector<unordered_map<feature_t, long> > sfreqs;
+    vector<double> base;
+    struct Posting {
+      long i;
+      double a, b;
+    };
+    vector<Posting> postings;
+    vector<size_t> post_start;
+};
+
+NaiveBayesView::NaiveBayesView(const View& view, long sym_num,
+  long max_deps, bool dense)
+: view(view), ranks(view.rank_table(sym_num)), tfidf(view.features()),
+  dense(dense) {
+  const long n = view.size();
+  for (const auto v : view.versions)
+    for (const auto& s : v->syms) tfidf.add(ranks_in(s, ranks));
+
+  // theorem i learns its first max_deps dependencies (NaiveBayes::learn)
+  const LVec ids = view.id_table();
+  LVecVec learned(n);
+  for (long i = 0; i < n; ++i) {
+    learned[i] = view.deps_of(i, ids);
+    if (max_deps > 0 && (long)learned[i].size() > max_deps)
+      learned[i].resize(max_deps);
+  }
+  user_start.assign(n + 1, 0);
+  for (const auto& ds : learned)
+    for (const auto d : ds) ++user_start[d + 1];
+  for (long i = 0; i < n; ++i) user_start[i + 1] += user_start[i];
+  users.resize(user_start[n]);
+  LVec next(user_start.begin(), user_start.end() - 1);
+  for (long i = 0; i < n; ++i)
+    for (const auto d : learned[i]) users[next[d]++] = i;
+
+  if (dense)
+    for (long i = 0; i < n; ++i) sfreqs.push_back(sfreq(i));
+  else
+    index();
+}
+
+void NaiveBayesView::add(unordered_map<feature_t, long>& m, long j,
+  long w) const {
+  const auto at = view.locate(j);
+  for (const auto f : at.first->syms[at.second]) add_sym(m, ranks[f], w);
+}
+
+unordered_map<feature_t, long> NaiveBayesView::sfreq(long i) const {
+  // NaiveBayes's sfreq starts from a copy of this
+  static const unordered_map<feature_t, long> empty(100);
+  unordered_map<feature_t, long> m(empty);
+  // theorem i learns itself before the theorems after it
+  bool self = false;
+  for (long u = user_start[i]; u < user_start[i + 1]; ++u) {
+    if (!self && users[u] >= i) {
+      add(m, i, 1000);
+      self = true;
+    }
+    add(m, users[u], 1);
+  }
+  if (!self) add(m, i, 1000);
+  return m;
+}
+
+double NaiveBayesView::score(long i, map<feature_t, double> symh) const {
+  const long t = 1000 + user_start[i + 1] - user_start[i];
+  if (dense)
+    return score_nbayes(t, sfreqs[i], move(symh), tfidf);
+  return score_nbayes(t, sfreq(i), move(symh), tfidf);
+}
+
+vector<pair<feature_t, long> > NaiveBayesView::counts(long i, LVec& acc)
+  const {
+  LVec touched;
+  const auto add = [&](long j, long w) {
+    const auto at = view.locate(j);
+    for (const auto f : at.first->syms[at.second]) {
+      const long r = ranks[f];
+      if (acc[r] == 0) touched.push_back(r);
+      acc[r] += w;
+    }
+  };
+  add(i, 1000);
+  for (long u = user_start[i]; u < user_start[i + 1]; ++u) add(users[u], 1);
+  sort(touched.begin(), touched.end());
+  vector<pair<feature_t, long> > out;
+  for (const auto r : touched) {
+    out.push_back(make_pair(r, acc[r]));
+    acc[r] = 0;
+  }
+  return out;
+}
+
+void NaiveBayesView::index() {
+  const long n = view.size(), features = view.features();
+  LVec acc(features, 0);
+
+  post_start.assign(features + 1, 0);
+  for (long i = 0; i < n; ++i)
+    for (const auto& fs : counts(i, acc)) ++post_start[fs.first + 1];
+  for (long f = 0; f < features; ++f)
+    post_start[f + 1] += post_start[f];
+  postings.resize(post_start[features]);
+
+  vector<size_t> next(post_start.begin(), post_start.end() - 1);
+  base.resize(n);
+  for (long i = 0; i < n; ++i) {
+    const long t = 1000 + user_start[i + 1] - user_start[i];
+    base[i] = 30 * log(t);
+    // in rank order, as NaiveBayes::index adds them up
+    for (const auto& fs : counts(i, acc)) {
+      const double idf = tfidf.get(fs.first);
+      const double s = fs.second;
+      const double b = idf * 0.2 * log(1 + (1 - s) / t);
+      base[i] += b;
+      postings[next[fs.first]++] = {i, idf * (log(5 * s / t) + 18), b};
+    }
+  }
+}
+
+LDPairVec NaiveBayesView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  // the query by rank, as NaiveBayes::predict_weighted takes it
+  LDPairVec ranked;
+  for (const auto& fw : query)
+    ranked.push_back(make_pair(view.rank_of(fw.first), fw.second));
+  const map<feature_t, double> symh(ranked.begin(), ranked.end());
+  const long n = view.size();
+
+  if (dense) {
+    LDPairVec ans;
+    for (long i = 0; i < n; ++i)
+      if (!in_scope || (*in_scope)[i])
+        ans.push_back(make_pair(i, score(i, symh)));
+    sort_prediction(ans, min(no_adv, (long)ans.size()));
+    return ans;
+  }
+
+  LDPairVec ans(n);
+  for (long i = 0; i < n; ++i)
+    ans[i] = make_pair(i, base[i]);
+
+  // in rank order, as NaiveBayes::predict_weighted adds features up
+  sort(ranked.begin(), ranked.end());
+  double c = 0;
+  for (const auto& fw : ranked) {
+    const double w = fw.second;
+    c += w * tfidf.get(fw.first) * 18;
+    for (size_t p = post_start[fw.first]; p < post_start[fw.first + 1]; ++p) {
+      const Posting& post = postings[p];
+      if (!in_scope || (*in_scope)[post.i])
+        ans[post.i].second += w * post.a - post.b;
+    }
+  }
+
+  settle_nbayes(ans, keep_in_scope(ans, in_scope, no_adv), c,
+    [&](long i) { return score(i, symh); });
+  return ans;
 }
