@@ -1269,11 +1269,15 @@ if [[ $out =~ ^predict\ [0-9a-f]{40}$ ]]; then ok "version is a commit"; else fa
 # A.a4, whose "z" no other theorem has; C's version 1 alone has "w"; B.b2
 # depends on A.a2 and A.a4; A.a1 and B.b1 have equal features, and A.a3 is
 # private. Versions come in a view in the order they were stored: in v2, B's
-# version 1 before A's version 2.
+# version 1 before A's version 2. For mepo -P, typed copies of the versions,
+# written to $WORK/t<theory><id>.*, have types, counts and frequency-only
+# tokens: the type "int" is only in A's version 2, which only v2 has, and
+# "y" only in a frequency-only token of C's version 1.
 # version <theory> <id> <syms lines>...: writes a version whose theorems are
-# those of the syms lines, with B.b2's dependencies
+# those of the syms lines, with B.b2's dependencies, to files prefixed $VP
+VP=
 version() {
-  local f=$WORK/$1$2 l
+  local f=$WORK/$VP$1$2 l
   shift 2
   : > "$f.seq"; : > "$f.thy"
   for l in "$@"; do
@@ -1289,41 +1293,62 @@ version A 2 'A.a1:"p", "q"' 'A.a2:"r", "s", "t"' 'A.a3:"p", "s"' 'A.a4:"z", "p"'
 version B 1 'B.b1:"p", "q"' 'B.b2:"q", "s"' 'B.b3:"t", "u"'
 version C 1 'C.c1:"u", "p"' 'C.c2:"w"'
 version C 2 'C.c1:"u", "q", "r"' 'C.c3:"p"'
+VP=t
+version A 1 'A.a1:"p"<c 1 _>*2, "q"' 'A.a2:"q"<c 0 "nat">, "r"' \
+  'A.a3:"p"<c 1 "nat">, "s", "q"+3'
+version A 2 'A.a1:"p"<c 1 _>*2, "q"' 'A.a2:"r", "s"<c 0 "int">, "t"' \
+  'A.a3:"p"<c 1 "nat">, "s", "q"+3' 'A.a4:"z"<v 0>, "p"<c 1 "int">*2'
+version B 1 'B.b1:"p"<c 1 _>*2, "q"' 'B.b2:"q"<c 0 "nat">*3, "s"' \
+  'B.b3:"t", "u"<c 1 "list"(_)>, "p"+2'
+version C 1 'C.c1:"u", "p", "y"+1' 'C.c2:"w"<v 0>'
+version C 2 'C.c1:"u"<c 1 "list"("nat")>, "q", "r"' 'C.c3:"p"<c 1 "nat">*2'
+VP=
 # store <theory> <id>: the command storing that version
-store() { local f=$WORK/$1$2; echo "!version $1 $2 $f.syms $f.deps $f.seq $f.thy"; }
+store() { local f=$WORK/$VP$1$2; echo "!version $1 $2 $f.syms $f.deps $f.seq $f.thy"; }
 # fresh <name> <theory><id>...: the corpus of those versions, in that order,
-# as files $WORK/<name>.{seq,syms,deps,thy}
+# as files $WORK/$VP<name>.{seq,syms,deps,thy}
 fresh() {
   local name=$1 f v
   shift
   for f in seq syms deps thy; do
-    for v in "$@"; do cat "$WORK/$v.$f"; done > "$WORK/$name.$f"
+    for v in "$@"; do cat "$WORK/$VP$v.$f"; done > "$WORK/$VP$name.$f"
   done
 }
-fresh v1 A1 B1 C1
-fresh v2 B1 A2
-fresh v1b A1 C2
+for VP in "" t; do
+  fresh v1 A1 B1 C1
+  fresh v2 B1 A2
+  fresh v1b A1 C2
+done
+VP=
 printf 'A 1\nB 1\nC 1\n' > "$WORK/v1.view"
 printf 'A 2\nB 1\n' > "$WORK/v2.view"
 printf 'C 2\nB\n' > "$WORK/v1b.view"
 # On v2, the second query's scores round otherwise when its features are
 # added up in the order the process numbers them rather than the view's.
 view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, "s"@0.463\n"s", "t"@0.5\n"z", "w", "u"\n"q"\n[k=2]"p", "q"\n[theory=A]"p", "s"\n[theory=B]"p", "s"\n[theory=A before=1]"p", "q", "r"\n[exclude=B]"p", "q"\n[ancestors=B]"p", "q"\n[theory=C before=1 exclude=A ancestors=B k=3]"u", "p"'
-# in_view <view>: the queries, each with view=<view> in its scope
-in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
+# with mepo -P, these too
+typed_view_queries=$'"p"<c 1 "nat">, "q"\n"s"<c 0 "int">, "p"<c 1 _>@0.5\n"u"<c 1 "list"(_)>, "y"\n"y"\n"z"<v 0>, "q"<c 0 "nat">@0.5\n[theory=A]"p"<c 1 "int">, "s"'
+# in_view <view>: the queries $q, each with view=<view> in its scope
+in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$q"; }
 # the methods with views; the others refuse them
-view_methods=(cosine cosine-dense knn "knn -c 0" mepo-cosine nbayes
-  nbayes-dense "nbayes -d 1" mash "mash -c 0")
-no_view_methods=(mepo "mepo -P" mesh rforest)
+view_methods=(cosine cosine-dense knn "knn -c 0" mepo-cosine mepo "mepo -P"
+  nbayes nbayes-dense "nbayes -d 1" mash "mash -c 0" mesh)
+no_view_methods=(rforest)
 
 # 45. a query on a view ranks as a process started on the view's theorems,
 # after views are created, changed and dropped, and the default view is as
 # before. Dropping v2 drops A's version 2 and B's version 1, which only it
 # uses: the count falls by their 7 theorems; stored again, they give v2
-# back.
+# back. mepo -P has the typed versions and the typed queries too.
 number=45
 msg=
 for m in "${view_methods[@]}"; do
+  q=$view_queries
+  VP=
+  if [ "$m" = "mepo -P" ]; then
+    q+=$'\n'$typed_view_queries
+    VP=t
+  fi
   out=$(note='with views' checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$(store A 1)
 $(store B 1)
 $(store C 1)
@@ -1332,7 +1357,7 @@ $(store A 2)
 !view v2 $WORK/v2.view
 $(in_view v1)
 $(in_view v2)
-$view_queries
+$q
 $(store C 2)
 !view v1 $WORK/v1b.view
 $(in_view v1)
@@ -1342,16 +1367,16 @@ $(store B 1)
 $(store A 2)
 !view v2 $WORK/v2.view
 $(in_view v2)")
-  v1b=$(checked v1b -p $m -L "$WORK/v1b.thy" -n 20 -S <<<"$view_queries")
+  v1b=$(checked ${VP}v1b -p $m -L "$WORK/${VP}v1b.thy" -n 20 -S <<<"$q")
   want="15
 18
 20
 20
 24
 24
-$(checked v1 -p $m -L "$WORK/v1.thy" -n 20 -S <<<"$view_queries")
-$(checked v2 -p $m -L "$WORK/v2.thy" -n 20 -S <<<"$view_queries")
-$(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$view_queries")
+$(checked ${VP}v1 -p $m -L "$WORK/${VP}v1.thy" -n 20 -S <<<"$q")
+$(checked ${VP}v2 -p $m -L "$WORK/${VP}v2.thy" -n 20 -S <<<"$q")
+$(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$q")
 26
 24
 $v1b
@@ -1360,12 +1385,13 @@ $v1b
 20
 24
 24
-$(checked v2 -p $m -L "$WORK/v2.thy" -n 20 -S <<<"$view_queries")"
+$(checked ${VP}v2 -p $m -L "$WORK/${VP}v2.thy" -n 20 -S <<<"$q")"
   if [ "$out" != "$want" ]; then
     msg="$m: '$out', not '$want'"
     break
   fi
 done
+VP=
 # Storing a version leaves the default view's numbering of features alone:
 # were "b" and "c" numbered before "a", the query's norm would round
 # otherwise. In the version D, D.x has two <syms> lines, so it has "g"

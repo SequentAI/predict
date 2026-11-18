@@ -299,15 +299,18 @@ wrong number of arguments, a file that cannot be read) is an error before
 anything changes. Versions have no `-F` flags. As with `!add` and
 `!replace`, the commands work neither with `-x` nor with `-y`.
 
-So far `cosine`, `cosine-dense`, `knn`, `mepo-cosine`, `nbayes`,
-`nbayes-dense` and `mash` have views; the other methods refuse the commands
-and `view=` with an error. Each theorem's features and dependencies are
-stored once per version, and each view has what its method learns from the
-view's theorems: its own IDF table, over the features of its theorems, and
-for `cosine` the norm of each of its theorems; for `nbayes`, the theorems
-that learn each theorem's features as a dependency (`-d` applies per view),
-and each theorem's baseline and the postings (`nbayes-dense`: each theorem's
-counts); `mash` has those of `knn` and `nbayes`.
+`cosine`, `cosine-dense`, `knn`, `mepo-cosine`, `mepo` (also with `-P`),
+`nbayes`, `nbayes-dense`, `mash` and `mesh` have views; `rforest` refuses the
+commands and `view=` with an error. Each theorem's features and dependencies
+(with `-P`, its typed symbols and frequency-only tokens) are stored once per
+version, and each view has what its method learns from the view's theorems:
+its own IDF table, over the features of its theorems, and for `cosine` the
+norm of each of its theorems; for `nbayes`, the theorems that learn each
+theorem's features as a dependency (`-d` applies per view), and each
+theorem's baseline and the postings (`nbayes-dense`: each theorem's counts);
+for `mepo`, each symbol's frequency (with `-P`, its occurrences at each type,
+and the frequencies of each theorem's symbols at their types); `mash` has
+those of `knn` and `nbayes`, and `mesh` those of `mepo` and `mash`.
 
 `tests/views.py` measures the memory and the view changes of a process on a
 synthetic corpus written by `tests/gen.py`.
