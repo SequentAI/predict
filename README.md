@@ -248,7 +248,7 @@ an added one is not read again, so it is missing, as with snapshots
 `predict` then learns the whole corpus again, so that it ranks as a process
 started on the changed corpus would, up to rounding (features may be
 numbered otherwise, which changes the order of some sums), and prints the
-number of theorems in the corpus. With `-P`, the files' types and
+number of theorems the process holds (see "Versions and views"). With `-P`, the files' types and
 frequency-only tokens are read too. Commands work neither with `-x` nor with
 `-y`.
 
