@@ -1,4 +1,5 @@
 #include <getopt.h>
+#include <sys/stat.h>
 #include <iomanip>
 #include <functional>
 #include <memory>
@@ -103,6 +104,14 @@ struct Session {
   bool growable;
 };
 
+// Exits unless [file], named in the command [line], can be read: a
+// directory can be opened, but not read.
+void check_readable(const string& file, const string& line) {
+  struct stat st;
+  if (!ifstream(file) || stat(file.c_str(), &st) != 0 || S_ISDIR(st.st_mode))
+    exit_error("Cannot read `" + file + "' in `" + line + "'!");
+}
+
 // The four files `<syms> <deps> <seq> <theories>` named in [args], each
 // checked to be readable, so that a command fails before it changes the
 // corpus.
@@ -112,9 +121,7 @@ vector<string> command_files(const string& args, const string& line) {
   string rest;
   if (!(in >> files[0] >> files[1] >> files[2] >> files[3]) || (in >> rest))
     exit_error("Expected four files in `" + line + "'!");
-  for (const auto& f : files)
-    if (!ifstream(f))
-      exit_error("Cannot read `" + f + "' in `" + line + "'!");
+  for (const auto& f : files) check_readable(f, line);
   return files;
 }
 
@@ -155,7 +162,7 @@ void store_version(Session& s, const string& args, const string& line) {
   if (s.views.versions.count(key))
     exit_error("Version `" + id + "' of `" + theory + "' is already stored "
                "in `" + line + "'!");
-  Version v = read_version(s.views, s.corpus, theory, paths);
+  Version v = read_version(s.views, theory, paths);
   v.serial = s.views.serial++;
   s.views.versions.emplace(key, move(v));
 }
@@ -168,9 +175,8 @@ void set_view(Session& s, const string& args, const string& line) {
   string name, file, rest;
   if (!(in >> name >> file) || (in >> rest) || !valid_theory(name))
     exit_error("Expected `!view <view> <file>', not `" + line + "'!");
+  check_readable(file, line);
   ifstream ic(file);
-  if (!ic)
-    exit_error("Cannot read `" + file + "' in `" + line + "'!");
   vector<pair<string, const Version*> > changes;
   string l;
   while (getline(ic, l)) {
@@ -189,11 +195,24 @@ void set_view(Session& s, const string& args, const string& line) {
                  + file + "'!");
     changes.push_back(make_pair(theory, &got->second));
   }
-  View& view = s.views.views[name];
+  if (ic.bad())
+    exit_error("Cannot read `" + file + "' in `" + line + "'!");
+  auto found = s.views.views.find(name);
+  map<string, const Version*> chosen;
+  if (found != s.views.views.end()) chosen = found->second.chosen;
   for (const auto& c : changes)
-    if (c.second) view.chosen[c.first] = c.second;
-    else view.chosen.erase(c.first);
-  view.arrange(s.corpus.no_sym.size());
+    if (c.second) chosen[c.first] = c.second;
+    else chosen.erase(c.first);
+  // a theorem id names one theorem of a view, as of a process
+  vector<char> seen(s.views.ids.size(), 0);
+  for (const auto& c : chosen)
+    for (const auto i : c.second->ids)
+      if (seen[i]++)
+        exit_error("Theorem `" + s.views.ids.key[i] + "' is in two theories "
+                   "of view `" + name + "', in `" + file + "'!");
+  View& view = s.views.views[name];
+  view.chosen = chosen;
+  view.arrange(s.views.features.size());
   view.predictor = s.make_view(view);
   s.views.drop_unused();
 }
@@ -269,7 +288,7 @@ void view_query(Session& s, string line, size_t start,
     ? view_scope_mask(scope, view) : vector<char>();
 
   LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
-    s.corpus.sym_no);
+    s.views.features.no);
   // a feature no theorem of the view has is unknown to the view
   query.erase(remove_if(query.begin(), query.end(),
     [&](const pair<long, double>& f) { return !view.has(f.first); }),
@@ -287,7 +306,7 @@ void view_query(Session& s, string line, size_t start,
   print_prediction(ans, min(k, (long)ans.size()),
     [&](long i) -> const string& {
       const auto at = view.locate(i);
-      return s.views.no_id[at.first->ids[at.second]];
+      return s.views.ids.key[at.first->ids[at.second]];
     }, s.scores);
 }
 

@@ -11,7 +11,7 @@
 // their own.
 struct Version {
   string theory;
-  long serial;          // versions are ordered by when they were stored
+  long serial = 0;      // versions are ordered by when they were stored
   LVec ids;             // each theorem's id, in <seq> order
   vector<char> priv;    // whether each theorem is private
   LVecVec syms;         // each theorem's features, in <syms> order

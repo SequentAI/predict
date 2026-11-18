@@ -1313,12 +1313,13 @@ view_queries=$'"p", "q"\n"z"@0.7, "s"@0.3, "t"@1.9, "r"@0.11, "q"@2.3, "p"@0.05,
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
 # the methods with views; the others refuse them
 view_methods="cosine cosine-dense"
-no_view_methods="knn nbayes nbayes-dense mepo mepo-cosine mash mesh rforest"
+no_view_methods=(knn nbayes nbayes-dense mepo "mepo -P" mepo-cosine mash mesh rforest)
 
 # 45. a query on a view ranks as a process started on the view's theorems,
 # after views are created, changed and dropped, and the default view is as
 # before. Dropping v2 drops A's version 2 and B's version 1, which only it
-# uses: the count falls by their 7 theorems.
+# uses: the count falls by their 7 theorems; stored again, they give v2
+# back.
 number=45
 msg=
 for m in $view_methods; do
@@ -1335,7 +1336,11 @@ $(store C 2)
 !view v1 $WORK/v1b.view
 $(in_view v1)
 !drop v2
-$(in_view v1)")
+$(in_view v1)
+$(store B 1)
+$(store A 2)
+!view v2 $WORK/v2.view
+$(in_view v2)")
   v1b=$(checked v1b -p $m -L "$WORK/v1b.thy" -n 20 -S <<<"$view_queries")
   want="15
 18
@@ -1350,11 +1355,47 @@ $(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$view_queries")
 24
 $v1b
 17
-$v1b"
+$v1b
+20
+24
+24
+$(checked v2 -p $m -L "$WORK/v2.thy" -n 20 -S <<<"$view_queries")"
   if [ "$out" != "$want" ]; then
     msg="$m: '$out', not '$want'"
     break
   fi
+done
+# Storing a version leaves the default view's numbering of features alone:
+# were "b" and "c" numbered before "a", the query's norm would round
+# otherwise. In the version D, D.x has two <syms> lines, so it has "g"
+# twice, as in a process started on D's files.
+corpus one $'s\n' $'s:"z"\n' ''
+corpus more $'p\nz1\nz2\n' $'p:"a", "b", "c"\nz1:"z"\nz2:"z"\n' ''
+sed 's/.*/&:X/' "$WORK/more.seq" > "$WORK/more.thy"
+corpus both $'s\np\nz1\nz2\n' $'s:"z"\np:"a", "b", "c"\nz1:"z"\nz2:"z"\n' ''
+version M 1 'M.m:"b", "c"'
+printf 'D.x\nD.y\nD.k1\nD.k2\nD.k3\nD.k4\n' > "$WORK/D1.seq"
+printf '%s\n' 'D.x:"f", "g"' 'D.y:"g", "h"' 'D.x:"g"' 'D.k1:"k"' 'D.k2:"k"' 'D.k3:"k"' 'D.k4:"k"' > "$WORK/D1.syms"
+: > "$WORK/D1.deps"
+sed 's/.*/&:D/' "$WORK/D1.seq" > "$WORK/D1.thy"
+printf 'D 1\n' > "$WORK/d.view"
+fresh d D1
+q='"a"@1, "b"@8e-17, "c"@8e-17'
+for m in $view_methods; do
+  [ -n "$msg" ] && break
+  out=$(note='with a version and !add' checked one -p $m -n 20 -S <<<"$(store M 1)
+!add $WORK/more.syms $WORK/more.deps $WORK/more.seq $WORK/more.thy
+$q
+$(store D 1)
+!view d $WORK/d.view
+[view=d]\"g\", \"f\"")
+  want="2
+5
+$(checked both -p $m -n 20 -S <<<"$q")
+11
+10
+$(checked d -p $m -L "$WORK/d.thy" -n 20 -S <<<'"g", "f"')"
+  [ "$out" = "$want" ] || msg="$m: '$out', not '$want'"
 done
 if [ -n "$msg" ]; then fail "views rank as fresh processes" "$msg"; else ok "views rank as fresh processes"; fi
 
@@ -1366,6 +1407,10 @@ cp "$WORK/A1.thy" "$WORK/bad.thy"
 sed -i 's/^A\.a2:A$/A.a2:B/' "$WORK/bad.thy"
 printf 'A 9\n' > "$WORK/unstored.view"
 printf 'A 1 x\n' > "$WORK/long.view"
+# version 1 of B, with A's theorem A.a1
+version X 1 'A.a1:"p"'
+sed -i 's/:A$/:B/' "$WORK/X1.thy"
+printf 'A 1\nB 1\n' > "$WORK/twice.view"
 # rejected <cmds> <ok lines> <error>: sets msg unless predict, given the
 # commands, prints <ok lines> lines and fails with the error on stderr
 rejected() {
@@ -1399,15 +1444,21 @@ $(store A 1)" 1 'already stored' &&
 !view v1 $WORK/v1.view" 1 'No version `1. of `B' &&
   rejected "$(store A 1)
 !view v1 $WORK/v2.view" 1 'No version' &&
+  rejected "!version A 1 $WORK $WORK/A1.deps $WORK/A1.seq $WORK/A1.thy" 0 'Cannot read' &&
+  rejected "$(store A 1)
+!view v1 $WORK" 1 'Cannot read' &&
+  rejected "$(store A 1)
+!version B 1 $WORK/X1.syms $WORK/X1.deps $WORK/X1.seq $WORK/X1.thy
+!view v1 $WORK/twice.view" 2 'Theorem `A.a1. is in two theories' &&
   rejected '!drop v1' 0 'Unknown view' &&
   rejected '[view=v1]"p"' 0 'Unknown view' &&
   rejected '[view=]"p"' 0 'Bad view'
-for m in $no_view_methods; do
+for m in "${no_view_methods[@]}"; do
   [ -n "$msg" ] && break
   for c in "$(store A 1)" "!view v1 $WORK/v1.view" '!drop v1' '[view=v1]"p"'; do
     out=$(run dag -p $m -L "$WORK/dag.thy" <<<"$c")
     status=$?
-    if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q -- "-p $m yet" "$WORK/stderr"; then
+    if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q -- "-p ${m%% *} yet" "$WORK/stderr"; then
       msg="$m, '$c': exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
       break
     fi

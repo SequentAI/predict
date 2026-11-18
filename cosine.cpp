@@ -185,9 +185,10 @@ LDPairVec CosineView::predict_weighted(const LDPairVec& query,
     for (long i = 0; i < n; ++i) {
       const auto at = view.locate(i);
       const LVec& syms = at.first->syms[at.second];
+      // once for each time the theorem has the feature, as Cosine does
       for (const auto& ft : terms)
-        if (find(syms.begin(), syms.end(), ft.first) != syms.end())
-          ans[i].second += ft.second;
+        for (const auto f : syms)
+          if (f == ft.first) ans[i].second += ft.second;
     }
   }
   else

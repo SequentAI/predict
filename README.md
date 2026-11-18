@@ -271,7 +271,8 @@ version of a theory under an id already stored is an error.
 `!view` creates the view `<view>` (a name like a theory's), or changes it,
 from the lines of `<file>`: `<theory> <id>` sets the theory's version, and
 `<theory>` alone removes the theory from the view. A line naming a version
-that is not stored is an error. `!drop` removes a view. After each `!view`
+that is not stored is an error, and so is a view whose theories would share
+a theorem id, as two theorems with one id are in `<seq>`. `!drop` removes a view. After each `!view`
 and `!drop`, the versions no view uses are dropped, so a version is stored
 right before the `!view` that uses it.
 
@@ -287,7 +288,8 @@ scope within `V`. A view that does not exist is an error.
 
 The theorems read at start-up and by `!add` and `!replace` form the default
 view, which queries without `view=` rank, as before. Named views hold only
-versions, never the default view's theorems.
+versions, never the default view's theorems, and storing versions changes
+nothing for the default view.
 
 Every command prints the number of theorems the process holds, in the
 default view and in every stored version. A command that cannot be run (a
