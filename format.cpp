@@ -400,11 +400,12 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
 
 // parses strings of the format:
 // thmid:"feature1", "feature2", ..., "featuren"
-// A feature repeated on a line counts once. With [types], also reads each
-// theorem's typed symbols into [typed]: a feature repeated with an equal
-// type counts once, its occurrence counts added up; and its frequency-only
-// tokens into [freq_only] alike, registering a new feature with no
-// theorems. Without [types], frequency-only tokens are ignored.
+// A feature repeated in a theorem's lines, on one line or several, counts
+// once. With [types], also reads each theorem's typed symbols into [typed]:
+// a feature repeated with an equal type counts once, its occurrence counts
+// added up; and its frequency-only tokens into [freq_only] alike,
+// registering a new feature with no theorems. Without [types],
+// frequency-only tokens are ignored.
 void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
                long &sym_num, const SLMap &th_no,
                HLMap &sym_no, SVec& no_sym,
@@ -423,7 +424,8 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
       exit_error("Theorem `" + th_str + "' not found!");
     long th = th_got->second;
 
-    unordered_set<long> seen;
+    // the theorem's features from its earlier lines count as seen
+    unordered_set<long> seen(syms[th].begin(), syms[th].end());
     for (const auto& t : parse_string_list(line.begin() + pos + 1, line.end(), false)) {
       const string& f = t.feature;
       const uint64_t fh = feature_hash(f);

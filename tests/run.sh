@@ -1516,4 +1516,27 @@ done
 if [ -n "$msg" ]; then fail "views of a synthetic corpus" "$msg"; else ok "views of a synthetic corpus"; fi
 LIMIT=5
 
+# 48. a feature on two <syms> lines of a theorem counts once, as on one line:
+# naive Bayes scores stay finite, the same as the one-line corpus's, with
+# and without the feature in the query
+number=48
+corpus twolines $'x\ny\n' $'x:"f", "g"\nx:"g"\ny:"g"\n' ''
+corpus oneline $'x\ny\n' $'x:"f", "g"\ny:"g"\n' ''
+msg=
+for m in nbayes nbayes-dense; do
+  for q in '"g"' '"f"' '"f", "g"'; do
+    a=$(checked twolines -p $m -S <<<"$q")
+    b=$(checked oneline -p $m -S <<<"$q")
+    if ! finite_scores <<<"$a" || [ "$a" != "$b" ]; then
+      msg="$m, '$q': two lines give '$a', one line '$b'"
+      break 2
+    fi
+  done
+done
+printf '"g"\n"f"\n"f", "g"\n' > "$WORK/twolines.queries"
+if [ -z "$msg" ] && ! same twolines nbayes nbayes-dense 2 "$WORK/twolines.queries"; then
+  msg="nbayes and nbayes-dense rank differently"
+fi
+if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "feature repeated across lines"; fi
+
 [ $failures -eq 0 ]
