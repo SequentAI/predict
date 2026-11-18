@@ -91,7 +91,8 @@ id:"feature1", "feature2", ..., "featuren"
   is written `\\`, and a newline is written `\n`; any other backslash is an
   error.
 - Features are separated by a comma and one space.
-- The list may be empty (`id:`). A feature repeated on a line counts once.
+- The list may be empty (`id:`). A theorem may have several lines; a feature
+  repeated on them, or on one line, counts once.
   Theorems without a line have no features.
 
 `<deps>` gives each theorem's dependencies, the theorems its proof uses:
