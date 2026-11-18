@@ -1516,4 +1516,33 @@ done
 if [ -n "$msg" ]; then fail "views of a synthetic corpus" "$msg"; else ok "views of a synthetic corpus"; fi
 LIMIT=5
 
+# 48. a feature on two <syms> lines of a theorem counts once, as on one line:
+# naive Bayes scores stay finite, the same as the one-line corpus's, and
+# nbayes and nbayes-dense agree on them, with and without the feature in the
+# query
+number=48
+corpus twolines $'x\ny\n' $'x:"f", "g"\nx:"g"\ny:"g"\n' ''
+corpus oneline $'x\ny\n' $'x:"f", "g"\ny:"g"\n' ''
+msg=
+declare -A nb
+for q in '"g"' '"f"' '"f", "g"'; do
+  for m in nbayes nbayes-dense; do
+    a=$(checked twolines -p $m -S <<<"$q")
+    b=$(checked oneline -p $m -S <<<"$q")
+    if ! finite_scores <<<"$a" || [ "$a" != "$b" ]; then
+      msg="$m, '$q': two lines give '$a', one line '$b'"
+      break 2
+    fi
+    nb[$m]=$a
+  done
+  sparse=${nb[nbayes]} dense=${nb[nbayes-dense]}
+  if [ "$(ids_of <<<"$sparse")" != "$(ids_of <<<"$dense")" ] ||
+     ! near "$(score_of x <<<"$sparse")" "$(score_of x <<<"$dense")" ||
+     ! near "$(score_of y <<<"$sparse")" "$(score_of y <<<"$dense")"; then
+    msg="'$q': nbayes gives '$sparse', nbayes-dense '$dense'"
+    break
+  fi
+done
+if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "feature repeated across lines"; fi
+
 [ $failures -eq 0 ]
