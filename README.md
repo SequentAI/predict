@@ -177,7 +177,8 @@ among the usable theorems only, as Isabelle's MaSh does when it selects the
 visible facts before ranking (`select_fact_idxs` in
 `src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML`).
 
-Scopes need each theorem's theory, given with `-L <theories>`:
+Scopes of the default view need each theorem's theory, given with `-L
+<theories>` (a view's versions bring their own, see "Versions and views"):
 
 ```
 id:theory
