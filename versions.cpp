@@ -42,6 +42,8 @@ struct Numbering {
   void release(long n) {
     if (--holders[n] > 0) return;
     no.erase(key[n]);
+    K none{};
+    swap(key[n], none);  // frees a string key's storage
     free.push_back(n);
   }
 
@@ -98,6 +100,8 @@ struct Views {
 vector<SVec> read_version_deps(const string& fname, const SLMap& th_no) {
   vector<SVec> deps(th_no.size());
   ifstream ic(fname);
+  if (!ic)
+    exit_error("Cannot read dependencies file `" + fname + "'!");
   string line;
   while (getline(ic, line)) {
     size_t pos = 0;
@@ -118,6 +122,8 @@ vector<SVec> read_version_deps(const string& fname, const SLMap& th_no) {
       deps[got->second].push_back(read_id(line, pos, " "));
     }
   }
+  if (ic.bad())
+    exit_error("Cannot read dependencies file `" + fname + "'!");
   return deps;
 }
 
