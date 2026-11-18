@@ -1,5 +1,6 @@
 #include <algorithm>
 #include "predictor.cpp"
+#include "view.cpp"
 
 // Ranks theorems by the cosine between the tf-idf vectors of the query and of
 // the theorem: a query feature f with weight w has coordinate w idf_f, and a
@@ -111,5 +112,111 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
   }
 
   sort_prediction(ans, keep_visible(ans, no_adv));
+  return ans;
+}
+
+// Cosine's ranking of the theorems of a view, computed as Cosine computes it
+// in a process started on them: with the view's IDF, adding up features in
+// the view's order.
+class CosineView : public ViewPredictor {
+  public:
+    CosineView(const View& view, bool dense);
+
+    LDPairVec predict_weighted(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    // the squared norm of the vector of a theorem with features [syms]
+    double norm2(const LVec& syms) const;
+
+    const View& view;
+    bool dense;
+    Tfidf tfidf;
+    // norm2 of each theorem of the view
+    vector<double> norms2;
+};
+
+CosineView::CosineView(const View& view, bool dense)
+: view(view), dense(dense), tfidf(view.rank.size()) {
+  for (const auto v : view.versions)
+    for (const auto& s : v->syms) tfidf.add(s);
+  if (!dense)
+    for (const auto v : view.versions)
+      for (const auto& s : v->syms) norms2.push_back(norm2(s));
+}
+
+double CosineView::norm2(const LVec& syms) const {
+  LVec in_order(syms);
+  sort(in_order.begin(), in_order.end(),
+    [&](long f, long g) { return view.rank[f] < view.rank[g]; });
+  double n = 0;
+  for (const auto f : in_order) {
+    const double idf = tfidf.get(f);
+    n += idf * idf;
+  }
+  return n;
+}
+
+LDPairVec CosineView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  // as in Cosine::predict_weighted, with features in the view's order
+  LDPairVec terms(query);
+  sort(terms.begin(), terms.end(),
+    [&](const pair<long, double>& a, const pair<long, double>& b) {
+      return view.rank[a.first] < view.rank[b.first]; });
+  double wmax = 0;
+  for (const auto& ft : terms)
+    if (tfidf.get(ft.first) != 0)
+      wmax = max(wmax, ft.second);
+  double qnorm2 = 0;
+  for (auto& ft : terms) {
+    const double idf = tfidf.get(ft.first);
+    const double w = idf != 0 && wmax > 0 ? ft.second / wmax : 0;
+    qnorm2 += w * w * (idf * idf);
+    ft.second = w * (idf * idf);
+  }
+
+  const long n = view.size();
+  LDPairVec ans(n);
+  for (long i = 0; i < n; ++i)
+    ans[i] = make_pair(i, 0.0);
+
+  if (dense) {
+    for (long i = 0; i < n; ++i) {
+      const auto at = view.locate(i);
+      const LVec& syms = at.first->syms[at.second];
+      for (const auto& ft : terms)
+        if (find(syms.begin(), syms.end(), ft.first) != syms.end())
+          ans[i].second += ft.second;
+    }
+  }
+  else
+    for (const auto& ft : terms)
+      for (size_t v = 0; v < view.versions.size(); ++v) {
+        const auto ths = view.versions[v]->theorems_of(ft.first);
+        for (auto t = ths.first; t != ths.second; ++t) {
+          const long i = view.first[v] + *t;
+          if (!in_scope || (*in_scope)[i]) ans[i].second += ft.second;
+        }
+      }
+
+  for (long i = 0; i < n; ++i) {
+    double n2 = 0;
+    if (!dense) n2 = norms2[i];
+    else {
+      const auto at = view.locate(i);
+      n2 = norm2(at.first->syms[at.second]);
+    }
+    if (ans[i].second != 0 && qnorm2 != 0 && n2 != 0)
+      ans[i].second /= sqrt(qnorm2 * n2);
+    else
+      ans[i].second = 0;
+  }
+
+  if (in_scope)
+    ans.erase(remove_if(ans.begin(), ans.end(),
+      [&](const pair<long, double>& p) { return !(*in_scope)[p.first]; }),
+      ans.end());
+  sort_prediction(ans, min(no_adv, (long)ans.size()));
   return ans;
 }

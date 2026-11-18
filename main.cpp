@@ -10,6 +10,7 @@
 #include "rforest.cpp"
 #include "scope.cpp"
 #include "snapshot.cpp"
+#include "versions.cpp"
 
 // The commit predict was built from: the Makefile defines it in a clone, and
 // git archive writes it below (.gitattributes) in a source archive.
@@ -68,11 +69,12 @@ const string usage_str =
   "predict --version prints the commit predict was built from.\n";
 
 
+// prints the first n_predictions of [prediction], each theorem i as name(i)
 void print_prediction(const LDPairVec& prediction, long n_predictions,
-  const vector<string>& no_th, bool scores) {
+  const function<const string&(long)>& name, bool scores) {
   for (long j = 0; j < n_predictions; ++j) {
     // print label
-    cout << no_th[prediction[j].first] << " ";
+    cout << name(prediction[j].first) << " ";
     // print weight
     if (scores)
       cout << "(" << setprecision(17) << prediction[j].second << ") ";
@@ -84,16 +86,20 @@ void print_prediction(const LDPairVec& prediction, long n_predictions,
 const long boost_depth = 128;
 
 // The state of the interactive mode: the corpus, and [make], which builds a
-// predictor for it.
+// predictor for it; the versions and views, and [make_view], which builds a
+// predictor for a view (null if the method has none).
 struct Session {
   Corpus& corpus;
   vector<unsigned char>& statures;
   Theories& theories;
   function<unique_ptr<Predictor>()> make;
+  Views views;
+  string method;
+  function<unique_ptr<ViewPredictor>(const View&)> make_view;
   long predno;
   double boost;
   bool scores;
-  // whether the corpus may change (!add and !replace)
+  // whether the corpus may change (the commands)
   bool growable;
 };
 
@@ -135,14 +141,98 @@ void add_theorems(Session& s, const vector<string>& files) {
   read_theories(theoriesf, c.th_no, s.theories);
 }
 
+// Runs `!version <theory> <id> <syms> <deps> <seq> <theories>`, whose
+// arguments are [args]: stores a version of <theory> read from the files.
+void store_version(Session& s, const string& args, const string& line) {
+  istringstream in(args);
+  string theory, id, files;
+  if (!(in >> theory >> id) || !valid_theory(theory))
+    exit_error("Expected `!version <theory> <id> <syms> <deps> <seq> "
+               "<theories>', not `" + line + "'!");
+  getline(in, files);
+  const vector<string> paths = command_files(files, line);
+  const auto key = make_pair(theory, id);
+  if (s.views.versions.count(key))
+    exit_error("Version `" + id + "' of `" + theory + "' is already stored "
+               "in `" + line + "'!");
+  Version v = read_version(s.views, s.corpus, theory, paths);
+  v.serial = s.views.serial++;
+  s.views.versions.emplace(key, move(v));
+}
+
+// Runs `!view <view> <file>`, whose arguments are [args]: creates or changes
+// the view from the lines `<theory> <id>` (sets the theory's version) and
+// `<theory>` (removes the theory) of the file.
+void set_view(Session& s, const string& args, const string& line) {
+  istringstream in(args);
+  string name, file, rest;
+  if (!(in >> name >> file) || (in >> rest) || !valid_theory(name))
+    exit_error("Expected `!view <view> <file>', not `" + line + "'!");
+  ifstream ic(file);
+  if (!ic)
+    exit_error("Cannot read `" + file + "' in `" + line + "'!");
+  vector<pair<string, const Version*> > changes;
+  string l;
+  while (getline(ic, l)) {
+    istringstream words(l);
+    string theory, id;
+    if (!(words >> theory) || !valid_theory(theory) || (words >> id >> rest))
+      exit_error("Expected `<theory> <id>' or `<theory>', not `" + l +
+                 "' in `" + file + "'!");
+    if (id.empty()) {
+      changes.push_back(make_pair(theory, nullptr));
+      continue;
+    }
+    auto got = s.views.versions.find(make_pair(theory, id));
+    if (got == s.views.versions.end())
+      exit_error("No version `" + id + "' of `" + theory + "' is stored, in `"
+                 + file + "'!");
+    changes.push_back(make_pair(theory, &got->second));
+  }
+  View& view = s.views.views[name];
+  for (const auto& c : changes)
+    if (c.second) view.chosen[c.first] = c.second;
+    else view.chosen.erase(c.first);
+  view.arrange(s.corpus.no_sym.size());
+  view.predictor = s.make_view(view);
+  s.views.drop_unused();
+}
+
+// Runs `!drop <view>`, whose argument is [args]: removes the view.
+void drop_view(Session& s, const string& args, const string& line) {
+  istringstream in(args);
+  string name, rest;
+  if (!(in >> name) || (in >> rest))
+    exit_error("Expected `!drop <view>', not `" + line + "'!");
+  if (!s.views.views.erase(name))
+    exit_error("Unknown view `" + name + "' in `" + line + "'!");
+  s.views.drop_unused();
+}
+
 // Runs the command [line]: `!add <syms> <deps> <seq> <theories>` adds
 // theorems after the others, `!replace <theory> <syms> <deps> <seq>
-// <theories>` removes the theorems of <theory> first.
-void command(Session& s, const string& line) {
+// <theories>` removes the theorems of <theory> first; `!version`, `!view`
+// and `!drop` change the versions and views. Returns whether the theorems
+// of the process (not those of versions) changed.
+bool command(Session& s, const string& line) {
   if (!s.growable)
     exit_error("`" + line + "' does not work with -y or -x!");
-  if (line.rfind("!add ", 0) == 0)
+  const size_t word = min(line.find(' '), line.size());
+  const string name = line.substr(0, word), args = line.substr(word);
+  if ((name == "!version" || name == "!view" || name == "!drop") &&
+      !s.make_view)
+    exit_error("Versions and views do not work with -p " + s.method +
+               " yet, in `" + line + "'!");
+  if (name == "!version")
+    store_version(s, args, line);
+  else if (name == "!view")
+    set_view(s, args, line);
+  else if (name == "!drop")
+    drop_view(s, args, line);
+  else if (line.rfind("!add ", 0) == 0) {
     add_theorems(s, command_files(line.substr(5), line));
+    return true;
+  }
   else if (line.rfind("!replace ", 0) == 0) {
     const size_t space = line.find(' ', 9);
     const string theory = line.substr(9, space - 9);
@@ -153,9 +243,52 @@ void command(Session& s, const string& line) {
     const long t = s.theories.find(theory);
     if (t != -1) remove_theory(s.corpus, s.statures, s.theories, t);
     add_theorems(s, files);
+    return true;
   }
   else
     exit_error("Unknown command `" + line + "'!");
+  return false;
+}
+
+// Answers the query [line], whose scope [scope] ends at [start], on the
+// theorems of the view it names.
+void view_query(Session& s, string line, size_t start,
+  const Scope& scope) {
+  if (!s.make_view)
+    exit_error("Views do not work with -p " + s.method + " yet, in query `" +
+               line + "'!");
+  auto got = s.views.views.find(scope.view);
+  if (got == s.views.views.end())
+    exit_error("Unknown view `" + scope.view + "' in query `" + line + "'!");
+  const View& view = got->second;
+  const long n = view.size();
+  const long k = min(n, scope.k > 0 ? scope.k : s.predno);
+  const long no_adv = scope.ancestors.empty() ? k
+    : min(n, max(k, boost_depth));
+  const vector<char> in_scope = scope.limits
+    ? view_scope_mask(scope, view) : vector<char>();
+
+  LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
+    s.corpus.sym_no);
+  // a feature no theorem of the view has is unknown to the view
+  query.erase(remove_if(query.begin(), query.end(),
+    [&](const pair<long, double>& f) { return !view.has(f.first); }),
+    query.end());
+  LDPairVec ans = view.predictor->predict_weighted(query,
+    scope.limits ? &in_scope : nullptr, no_adv);
+  ans.resize(min(no_adv, (long)ans.size()));
+  if (!scope.ancestors.empty()) {
+    const unordered_set<string> anc(scope.ancestors.begin(),
+      scope.ancestors.end());
+    boost_ancestors(ans,
+      [&](long i) { return anc.count(view.locate(i).first->theory) > 0; },
+      s.boost);
+  }
+  print_prediction(ans, min(k, (long)ans.size()),
+    [&](long i) -> const string& {
+      const auto at = view.locate(i);
+      return s.views.no_id[at.first->ids[at.second]];
+    }, s.scores);
 }
 
 // Answers the queries and runs the commands on standard input, one output
@@ -168,15 +301,20 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
   while (getline(cin, line)) {
     const long n = s.corpus.no_th.size();
     if (!line.empty() && line[0] == '!') {
-      command(s, line);
-      p = s.make();
-      p->learn_all();
-      cout << s.corpus.no_th.size() << endl;
+      if (command(s, line)) {
+        p = s.make();
+        p->learn_all();
+      }
+      cout << s.corpus.no_th.size() + s.views.theorems() << endl;
       continue;
     }
 
     Scope scope;
     const size_t start = parse_scope(line, scope);
+    if (!scope.view.empty()) {
+      view_query(s, line, start, scope);
+      continue;
+    }
     const bool scoped = start > 0;
     const long k = min(n, scope.k > 0 ? scope.k : s.predno);
     const long no_adv = scope.ancestors.empty() ? k
@@ -200,9 +338,15 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
       ans = p->predict_weighted(query, n, no_adv);
     }
     ans.resize(min(no_adv, (long)ans.size()));
-    if (!scope.ancestors.empty())
-      boost_ancestors(ans, scope, s.theories, s.boost);
-    print_prediction(ans, min(k, (long)ans.size()), s.corpus.no_th, s.scores);
+    if (!scope.ancestors.empty()) {
+      unordered_set<long> anc;
+      for (const auto& t : scope.ancestors) anc.insert(s.theories.find(t));
+      anc.erase(-1);
+      boost_ancestors(ans,
+        [&](long i) { return anc.count(s.theories.of[i]) > 0; }, s.boost);
+    }
+    print_prediction(ans, min(k, (long)ans.size()),
+      [&](long i) -> const string& { return s.corpus.no_th[i]; }, s.scores);
   }
 }
 
@@ -223,7 +367,8 @@ void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
       LDPairVec ans = p->predict(i, i, no_adv);
 
       cout << no_th[i] << ":";
-      print_prediction(ans, no_adv, no_th, scores);
+      print_prediction(ans, no_adv,
+        [&](long j) -> const string& { return no_th[j]; }, scores);
     }
   }
 }
@@ -503,8 +648,14 @@ int main(int argc, char* argv[]) {
 
   // if user did not supply evaluation file
   if (evalf == "") {
-    Session session{corpus, statures, theories, make, predno, boost, scores,
-      import_path.empty() && export_path.empty()};
+    auto make_view = [&](const View& view) {
+      return unique_ptr<ViewPredictor>(
+        new CosineView(view, method == "cosine-dense"));
+    };
+    const bool views = method == "cosine" || method == "cosine-dense";
+    Session session{corpus, statures, theories, make, Views(), method,
+      views ? make_view : function<unique_ptr<ViewPredictor>(const View&)>(),
+      predno, boost, scores, import_path.empty() && export_path.empty()};
     interaction(predictor, session);
   }
   else

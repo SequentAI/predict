@@ -1264,4 +1264,155 @@ number=44
 out=$("$PREDICT" --version)
 if [[ $out =~ ^predict\ [0-9a-f]{40}$ ]]; then ok "version is a commit"; else fail "version is a commit" "--version printed '$out'"; fi
 
+# Versions and views. Each version below is a theory's files, written to
+# $WORK/<theory><id>.{seq,syms,deps,thy}. A's version 2 changes A.a2 and adds
+# A.a4, whose "z" no other theorem has; C's version 1 alone has "w"; B.b2
+# depends on A.a2 and A.a4; A.a1 and B.b1 have equal features, and A.a3 is
+# private. Versions come in a view in the order they were stored: in v2, B's
+# version 1 before A's version 2.
+# version <theory> <id> <syms lines>...: writes a version whose theorems are
+# those of the syms lines, with B.b2's dependencies
+version() {
+  local f=$WORK/$1$2 l
+  shift 2
+  : > "$f.seq"; : > "$f.thy"
+  for l in "$@"; do
+    echo "${l%%:*}" >> "$f.seq"
+    echo "${l%%:*}:${l%%.*}" >> "$f.thy"
+  done
+  printf '%s\n' "$@" > "$f.syms"
+  grep -q '^B\.b2:' "$f.syms" && echo 'B.b2:A.a2 A.a4' > "$f.deps" || : > "$f.deps"
+  sed -i 's/^A\.a3:A$/& private/' "$f.thy"
+}
+version A 1 'A.a1:"p", "q"' 'A.a2:"q", "r"' 'A.a3:"p", "s"'
+version A 2 'A.a1:"p", "q"' 'A.a2:"r", "s", "t"' 'A.a3:"p", "s"' 'A.a4:"z", "p"'
+version B 1 'B.b1:"p", "q"' 'B.b2:"q", "s"' 'B.b3:"t", "u"'
+version C 1 'C.c1:"u", "p"' 'C.c2:"w"'
+version C 2 'C.c1:"u", "q", "r"' 'C.c3:"p"'
+# store <theory> <id>: the command storing that version
+store() { local f=$WORK/$1$2; echo "!version $1 $2 $f.syms $f.deps $f.seq $f.thy"; }
+# fresh <name> <theory><id>...: the corpus of those versions, in that order,
+# as files $WORK/<name>.{seq,syms,deps,thy}
+fresh() {
+  local name=$1 f v
+  shift
+  for f in seq syms deps thy; do
+    for v in "$@"; do cat "$WORK/$v.$f"; done > "$WORK/$name.$f"
+  done
+}
+fresh v1 A1 B1 C1
+fresh v2 B1 A2
+fresh v1b A1 C2
+printf 'A 1\nB 1\nC 1\n' > "$WORK/v1.view"
+printf 'A 2\nB 1\n' > "$WORK/v2.view"
+printf 'C 2\nB\n' > "$WORK/v1b.view"
+# The second query's norm rounds otherwise when its features are added up in
+# the process's order rather than the view's.
+view_queries=$'"p", "q"\n"z"@0.7, "s"@0.3, "t"@1.9, "r"@0.11, "q"@2.3, "p"@0.05, "u"@1.3, "w"@0.9\n"s", "t"@0.5\n"z", "w", "u"\n"q"\n[k=2]"p", "q"\n[theory=A]"p", "s"\n[theory=B]"p", "s"\n[theory=A before=1]"p", "q", "r"\n[exclude=B]"p", "q"\n[ancestors=B]"p", "q"\n[theory=C before=1 exclude=A ancestors=B k=3]"u", "p"'
+# in_view <view>: the queries, each with view=<view> in its scope
+in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
+# the methods with views; the others refuse them
+view_methods="cosine cosine-dense"
+no_view_methods="knn nbayes nbayes-dense mepo mepo-cosine mash mesh rforest"
+
+# 45. a query on a view ranks as a process started on the view's theorems,
+# after views are created, changed and dropped, and the default view is as
+# before. Dropping v2 drops A's version 2 and B's version 1, which only it
+# uses: the count falls by their 7 theorems.
+number=45
+msg=
+for m in $view_methods; do
+  out=$(note='with views' checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$(store A 1)
+$(store B 1)
+$(store C 1)
+!view v1 $WORK/v1.view
+$(store A 2)
+!view v2 $WORK/v2.view
+$(in_view v1)
+$(in_view v2)
+$view_queries
+$(store C 2)
+!view v1 $WORK/v1b.view
+$(in_view v1)
+!drop v2
+$(in_view v1)")
+  v1b=$(checked v1b -p $m -L "$WORK/v1b.thy" -n 20 -S <<<"$view_queries")
+  want="15
+18
+20
+20
+24
+24
+$(checked v1 -p $m -L "$WORK/v1.thy" -n 20 -S <<<"$view_queries")
+$(checked v2 -p $m -L "$WORK/v2.thy" -n 20 -S <<<"$view_queries")
+$(checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$view_queries")
+26
+24
+$v1b
+17
+$v1b"
+  if [ "$out" != "$want" ]; then
+    msg="$m: '$out', not '$want'"
+    break
+  fi
+done
+if [ -n "$msg" ]; then fail "views rank as fresh processes" "$msg"; else ok "views rank as fresh processes"; fi
+
+# 46. malformed version and view commands, and unknown views, are errors
+# before any change, and methods without views refuse them
+number=46
+msg=
+cp "$WORK/A1.thy" "$WORK/bad.thy"
+sed -i 's/^A\.a2:A$/A.a2:B/' "$WORK/bad.thy"
+printf 'A 9\n' > "$WORK/unstored.view"
+printf 'A 1 x\n' > "$WORK/long.view"
+# rejected <cmds> <ok lines> <error>: sets msg unless predict, given the
+# commands, prints <ok lines> lines and fails with the error on stderr
+rejected() {
+  local out status
+  out=$(run dag -p cosine -L "$WORK/dag.thy" <<<"$1")
+  status=$?
+  if [ $status -eq 0 ] || [ "$(grep -c . <<<"$out")" -ne "$2" ] ||
+     ! grep -q -- "$3" "$WORK/stderr"; then
+    msg="'$1': exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+    return 1
+  fi
+}
+A1="$WORK/A1.syms $WORK/A1.deps $WORK/A1.seq"
+rejected "!version A 1 $A1" 0 'Expected four files' &&
+  rejected '!version A' 0 'Expected `!version' &&
+  rejected "!view v1" 0 'Expected `!view' &&
+  rejected "!view v1 $WORK/v1.view x" 0 'Expected `!view' &&
+  rejected '!drop' 0 'Expected `!drop' &&
+  rejected "!drop v1 v2" 0 'Expected `!drop' &&
+  rejected "!version A 1 $WORK/missing.syms $WORK/A1.deps $WORK/A1.seq $WORK/A1.thy" 0 'Cannot read' &&
+  rejected "$(store A 1)
+!view v1 $WORK/missing.view" 1 'Cannot read' &&
+  rejected "$(store A 1)
+$(store A 1)" 1 'already stored' &&
+  rejected "!version A 1 $A1 $WORK/bad.thy" 0 'not of theory `A' &&
+  rejected "$(store A 1)
+!view v1 $WORK/unstored.view" 1 'No version `9' &&
+  rejected "$(store A 1)
+!view v1 $WORK/long.view" 1 'Expected `<theory> <id>' &&
+  rejected "$(store A 1)
+!view v1 $WORK/v1.view" 1 'No version `1. of `B' &&
+  rejected "$(store A 1)
+!view v1 $WORK/v2.view" 1 'No version' &&
+  rejected '!drop v1' 0 'Unknown view' &&
+  rejected '[view=v1]"p"' 0 'Unknown view' &&
+  rejected '[view=]"p"' 0 'Bad view'
+for m in $no_view_methods; do
+  [ -n "$msg" ] && break
+  for c in "$(store A 1)" "!view v1 $WORK/v1.view" '!drop v1' '[view=v1]"p"'; do
+    out=$(run dag -p $m -L "$WORK/dag.thy" <<<"$c")
+    status=$?
+    if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q -- "-p $m yet" "$WORK/stderr"; then
+      msg="$m, '$c': exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+      break
+    fi
+  done
+done
+if [ -n "$msg" ]; then fail "bad versions and views" "$msg"; else ok "bad versions and views"; fi
+
 [ $failures -eq 0 ]
