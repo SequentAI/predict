@@ -671,10 +671,23 @@ int main(int argc, char* argv[]) {
   // if user did not supply evaluation file
   if (evalf == "") {
     auto make_view = [&](const View& view, long sym_num) {
-      return unique_ptr<ViewPredictor>(
-        new CosineView(view, method == "cosine-dense", sym_num));
+      unique_ptr<ViewPredictor> p;
+      if (method == "cosine" || method == "cosine-dense")
+        p.reset(new CosineView(view, method == "cosine-dense", sym_num));
+      else if (method == "knn")
+        p.reset(new kNNView(view, sym_num, credit_deps));
+      else if (method == "mepo-cosine")
+        p.reset(new MePoCosineView(view, sym_num));
+      else if (method == "nbayes" || method == "nbayes-dense")
+        p.reset(new NaiveBayesView(view, sym_num, max_deps,
+          method == "nbayes-dense"));
+      else if (method == "mash")
+        p.reset(new MaShView(view, sym_num, max_deps, credit_deps));
+      return p;
     };
-    const bool views = method == "cosine" || method == "cosine-dense";
+    const bool views = method == "cosine" || method == "cosine-dense" ||
+      method == "knn" || method == "mepo-cosine" || method == "nbayes" ||
+      method == "nbayes-dense" || method == "mash";
     Session session{corpus, statures, theories, make, Views(), method,
       views ? make_view
         : function<unique_ptr<ViewPredictor>(const View&, long)>(),

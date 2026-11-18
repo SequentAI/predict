@@ -137,13 +137,6 @@ class CosineView : public ViewPredictor {
     vector<double> norms2;
 };
 
-// the ranks of features [syms] in [table] (View::rank_table)
-LVec ranks_in(const LVec& syms, const LVec& table) {
-  LVec out;
-  for (const auto f : syms) out.push_back(table[f]);
-  return out;
-}
-
 CosineView::CosineView(const View& view, bool dense, long sym_num)
 : view(view), dense(dense), tfidf(view.features()) {
   const LVec table = view.rank_table(sym_num);

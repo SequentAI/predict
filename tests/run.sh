@@ -1312,8 +1312,9 @@ view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, 
 # in_view <view>: the queries, each with view=<view> in its scope
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$view_queries"; }
 # the methods with views; the others refuse them
-view_methods="cosine cosine-dense"
-no_view_methods=(knn nbayes nbayes-dense mepo "mepo -P" mepo-cosine mash mesh rforest)
+view_methods=(cosine cosine-dense knn "knn -c 0" mepo-cosine nbayes
+  nbayes-dense "nbayes -d 1" mash "mash -c 0")
+no_view_methods=(mepo "mepo -P" mesh rforest)
 
 # 45. a query on a view ranks as a process started on the view's theorems,
 # after views are created, changed and dropped, and the default view is as
@@ -1322,7 +1323,7 @@ no_view_methods=(knn nbayes nbayes-dense mepo "mepo -P" mepo-cosine mash mesh rf
 # back.
 number=45
 msg=
-for m in $view_methods; do
+for m in "${view_methods[@]}"; do
   out=$(note='with views' checked dag -p $m -L "$WORK/dag.thy" -n 20 -S <<<"$(store A 1)
 $(store B 1)
 $(store C 1)
@@ -1381,7 +1382,7 @@ sed 's/.*/&:D/' "$WORK/D1.seq" > "$WORK/D1.thy"
 printf 'D 1\n' > "$WORK/d.view"
 fresh d D1
 q='"a"@1, "b"@8e-17, "c"@8e-17'
-for m in $view_methods; do
+for m in "${view_methods[@]}"; do
   [ -n "$msg" ] && break
   out=$(note='with a version and !add' checked one -p $m -n 20 -S <<<"$(store M 1)
 !add $WORK/more.syms $WORK/more.deps $WORK/more.seq $WORK/more.thy
@@ -1473,5 +1474,46 @@ for m in "${no_view_methods[@]}"; do
   done
 done
 if [ -n "$msg" ]; then fail "bad versions and views" "$msg"; else ok "bad versions and views"; fi
+
+# 47. on the first 3000 theorems of the synthetic corpus, cut into theories
+# S0, ..., S5 of 500, a view ranks as a process started on its theorems,
+# scores included: the view leaves S4 out, has S0 at a version whose
+# theorems have the features of theorems 1500 places later, stored last.
+# Its theorems include ones with more than 20 dependencies, dependencies on
+# later theorems and on theorems of S4, and equal features; naive Bayes adds
+# a theorem's counts up in the order the process learned them.
+number=47
+LIMIT=600
+msg=
+for k in $(seq 0 5); do
+  sed -n "$((500 * k + 1)),$((500 * k + 500))p" "$WORK/synth.seq" > "$WORK/S${k}a.seq"
+  sed -n "$((500 * k + 1)),$((500 * k + 500))p" "$WORK/synth.syms" > "$WORK/S${k}a.syms"
+  sed -n "$((500 * k + 1)),$((500 * k + 500))p" "$WORK/synth.deps" > "$WORK/S${k}a.deps"
+  sed "s/\$/:S$k/" "$WORK/S${k}a.seq" > "$WORK/S${k}a.thy"
+done
+cp "$WORK/S0a.seq" "$WORK/S0b.seq"
+cp "$WORK/S0a.deps" "$WORK/S0b.deps"
+cp "$WORK/S0a.thy" "$WORK/S0b.thy"
+paste -d: "$WORK/S0a.seq" <(sed -n 1501,2000p "$WORK/synth.syms" | cut -d: -f2-) > "$WORK/S0b.syms"
+stored=(S1a S2a S3a S4a S5a S0b)
+printf 'S%s a\n' 1 2 3 5 > "$WORK/s.view"
+echo 'S0 b' >> "$WORK/s.view"
+fresh s S1a S2a S3a S5a S0b
+{
+  cat "$WORK/synth.wqueries"
+  head -5 "$WORK/synth.queries" | sed 's/^/[theory=S3 before=200 exclude=S5]/'
+} > "$WORK/s.queries"
+for m in "${view_methods[@]}"; do
+  out=$(note='with a view of the synthetic corpus' checked one -p $m -n 300 -S <<<"$(for v in "${stored[@]}"; do echo "!version ${v%?} ${v: -1} $WORK/$v.syms $WORK/$v.deps $WORK/$v.seq $WORK/$v.thy"; done)
+!view s $WORK/s.view
+$(sed 's/^\[/[view=s /; t; s/^/[view=s]/' "$WORK/s.queries")" | tail -n +8)
+  want=$(checked s -p $m -L "$WORK/s.thy" -n 300 -S < "$WORK/s.queries")
+  if [ -z "$want" ] || [ "$out" != "$want" ]; then
+    msg="$m: the view's rankings differ from a fresh process's"
+    break
+  fi
+done
+if [ -n "$msg" ]; then fail "views of a synthetic corpus" "$msg"; else ok "views of a synthetic corpus"; fi
+LIMIT=5
 
 [ $failures -eq 0 ]
