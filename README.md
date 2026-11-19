@@ -285,8 +285,9 @@ of `V`'s versions, in the order the versions were stored, each version's in
 `<seq>` order. So equal scores are ranked in that order, `before=n` counts
 the theorems of `V`'s version of the theory, a dependency names a theorem
 and means `V`'s version of it, a query feature that no theorem of `V` has is
-dropped, and the statistics (IDF, ...) are learned from `V`'s theorems
-alone. `[view=V]` alone ranks as a query without a scope; other keys make a
+dropped (with `-P`, one that `V`'s theorems have only in frequency-only
+tokens is kept, as such a process keeps it), and the statistics (IDF, ...)
+are learned from `V`'s theorems alone. `[view=V]` alone ranks as a query without a scope; other keys make a
 scope within `V`. A view that does not exist is an error.
 
 The theorems read at start-up and by `!add` and `!replace` form the default
