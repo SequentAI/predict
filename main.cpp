@@ -163,7 +163,7 @@ void store_version(Session& s, const string& args, const string& line) {
   if (s.views.versions.count(key))
     exit_error("Version `" + id + "' of `" + theory + "' is already stored "
                "in `" + line + "'!");
-  Version v = read_version(s.views, theory, paths);
+  Version v = read_version(s.views, theory, paths, s.corpus.types);
   v.serial = s.views.serial++;
   s.views.versions.emplace(key, move(v));
 }
@@ -290,14 +290,26 @@ void view_query(Session& s, string line, size_t start,
   const vector<char> in_scope = scope.limits
     ? view_scope_mask(scope, view) : vector<char>();
 
-  LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
-    s.views.features.no);
+  LDPairVec ans;
   // a feature no theorem of the view has is unknown to the view
-  query.erase(remove_if(query.begin(), query.end(),
-    [&](const pair<long, double>& f) { return view.rank_of(f.first) < 0; }),
-    query.end());
-  LDPairVec ans = view.predictor->predict_weighted(query,
-    scope.limits ? &in_scope : nullptr, no_adv);
+  if (s.corpus.types) {
+    vector<TypedSym> query = parse_typed_query(line.begin() + start,
+      line.end(), s.views.features.no, *s.corpus.types);
+    query.erase(remove_if(query.begin(), query.end(),
+      [&](const TypedSym& f) { return view.rank_of(f.sym) < 0; }),
+      query.end());
+    ans = static_cast<const MePoView&>(*view.predictor).predict_typed(query,
+      scope.limits ? &in_scope : nullptr, no_adv);
+  }
+  else {
+    LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
+      s.views.features.no);
+    query.erase(remove_if(query.begin(), query.end(),
+      [&](const pair<long, double>& f) { return view.rank_of(f.first) < 0; }),
+      query.end());
+    ans = view.predictor->predict_weighted(query,
+      scope.limits ? &in_scope : nullptr, no_adv);
+  }
   ans.resize(min(no_adv, (long)ans.size()));
   if (!scope.ancestors.empty()) {
     const unordered_set<string> anc(scope.ancestors.begin(),
@@ -683,11 +695,13 @@ int main(int argc, char* argv[]) {
           method == "nbayes-dense"));
       else if (method == "mash")
         p.reset(new MaShView(view, sym_num, max_deps, credit_deps));
+      else if (method == "mepo")
+        p.reset(new MePoView(view, sym_num, typed_mepo ? &types : nullptr));
+      else if (method == "mesh")
+        p.reset(new MeShView(view, sym_num, max_deps, credit_deps, over));
       return p;
     };
-    const bool views = method == "cosine" || method == "cosine-dense" ||
-      method == "knn" || method == "mepo-cosine" || method == "nbayes" ||
-      method == "nbayes-dense" || method == "mash";
+    const bool views = method != "rforest";
     Session session{corpus, statures, theories, make, Views(), method,
       views ? make_view
         : function<unique_ptr<ViewPredictor>(const View&, long)>(),

@@ -130,9 +130,10 @@ vector<SVec> read_version_deps(const string& fname, const SLMap& th_no,
 
 /* Reads a version of [theory] from the files `<syms> <deps> <seq>
    <theories>` (command_files), in which every theorem must be of [theory],
-   numbering its features and ids in [views]. */
+   numbering its features and ids in [views]; with [types], its typed
+   symbols too, as read_syms reads them. */
 Version read_version(Views& views, const string& theory,
-                     const vector<string>& files) {
+                     const vector<string>& files, TypeTable* types) {
   const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
     &theoriesf = files[3];
   SLMap th_no;
@@ -172,7 +173,9 @@ Version read_version(Views& views, const string& theory,
   long sym_num = 0;
   HLMap sym_no;
   SVec no_sym;
-  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym);
+  TypedSyms typed(types ? n : 0), freq_only(types ? n : 0);
+  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym, types,
+    &typed, &freq_only);
 
   Version v;
   v.theory = theory;
@@ -186,6 +189,12 @@ Version read_version(Views& views, const string& theory,
     for (const auto k : syms[i]) v.syms[i].push_back(v.appearance[k]);
     for (const auto& d : deps[i]) v.deps[i].push_back(views.ids.number(d));
   }
+  // typed symbols, their features numbered as the others
+  for (auto* ts : {&typed, &freq_only})
+    for (auto& th : *ts)
+      for (auto& s : th) s.sym = v.appearance[s.sym];
+  v.typed = move(typed);
+  v.freq_only = move(freq_only);
   for (const auto f : v.appearance) views.features.hold(f);
   for (const auto i : Views::named_ids(v)) views.ids.hold(i);
   LVec by_feature(sym_num);

@@ -16,6 +16,9 @@ struct Version {
   vector<char> priv;    // whether each theorem is private
   LVecVec syms;         // each theorem's features, in <syms> order
   LVecVec deps;         // each theorem's dependencies
+  // with -P, each theorem's typed symbols and its occurrences counted only
+  // in frequencies, as in <syms>; empty otherwise
+  TypedSyms typed, freq_only;
   LVec appearance;      // the features in the order <syms> first names them
   // The theorems having feature feats[k] are ths[start[k]], ...,
   // ths[start[k + 1] - 1], in the order <syms> names them; feats is
