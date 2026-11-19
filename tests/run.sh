@@ -1327,7 +1327,7 @@ printf 'C 2\nB\n' > "$WORK/v1b.view"
 # added up in the order the process numbers them rather than the view's.
 view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, "s"@0.463\n"s", "t"@0.5\n"z", "w", "u"\n"q"\n[k=2]"p", "q"\n[theory=A]"p", "s"\n[theory=B]"p", "s"\n[theory=A before=1]"p", "q", "r"\n[exclude=B]"p", "q"\n[ancestors=B]"p", "q"\n[theory=C before=1 exclude=A ancestors=B k=3]"u", "p"'
 # with mepo -P, these too
-typed_view_queries=$'"p"<c 1 "nat">, "q"\n"s"<c 0 "int">, "p"<c 1 _>@0.5\n"u"<c 1 "list"(_)>, "y"\n"y"\n"z"<v 0>, "q"<c 0 "nat">@0.5\n[theory=A]"p"<c 1 "int">, "s"'
+typed_view_queries=$'"p"<c 1 "nat">, "q"\n"s"<c 0 "int">, "p"<c 1 _>@0.5\n"u"<c 1 "list"(_)>, "y"\n"y"\n"y", "p"@0.5\n"z"<v 0>, "q"<c 0 "nat">@0.5\n[theory=A]"p"<c 1 "int">, "s"'
 # in_view <view>: the queries $q, each with view=<view> in its scope
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$q"; }
 # the methods with views; the others refuse them
