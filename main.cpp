@@ -88,15 +88,13 @@ const long boost_depth = 128;
 
 // The state of the interactive mode: the corpus, and [make], which builds a
 // predictor for it; the versions and views, and [make_view], which builds a
-// predictor for a view, given the number of the versions' features (null if
-// the method has none).
+// predictor for a view, given the number of the versions' features.
 struct Session {
   Corpus& corpus;
   vector<unsigned char>& statures;
   Theories& theories;
   function<unique_ptr<Predictor>()> make;
   Views views;
-  string method;
   function<unique_ptr<ViewPredictor>(const View&, long)> make_view;
   long predno;
   double boost;
@@ -241,10 +239,6 @@ bool command(Session& s, const string& line) {
     exit_error("`" + line + "' does not work with -y or -x!");
   const size_t word = min(line.find(' '), line.size());
   const string name = line.substr(0, word), args = line.substr(word);
-  if ((name == "!version" || name == "!view" || name == "!drop") &&
-      !s.make_view)
-    exit_error("Versions and views do not work with -p " + s.method +
-               " yet, in `" + line + "'!");
   if (name == "!version")
     store_version(s, args, line);
   else if (name == "!view")
@@ -276,9 +270,6 @@ bool command(Session& s, const string& line) {
 // theorems of the view it names.
 void view_query(Session& s, string line, size_t start,
   const Scope& scope) {
-  if (!s.make_view)
-    exit_error("Views do not work with -p " + s.method + " yet, in query `" +
-               line + "'!");
   auto got = s.views.views.find(scope.view);
   if (got == s.views.views.end())
     exit_error("Unknown view `" + scope.view + "' in query `" + line + "'!");
@@ -699,12 +690,12 @@ int main(int argc, char* argv[]) {
         p.reset(new MePoView(view, sym_num, typed_mepo ? &types : nullptr));
       else if (method == "mesh")
         p.reset(new MeShView(view, sym_num, max_deps, credit_deps, over));
+      else if (method == "rforest")
+        p.reset(new RandomForestView(view, sym_num, n_trees, n_samples,
+          n_features, depweight));
       return p;
     };
-    const bool views = method != "rforest";
-    Session session{corpus, statures, theories, make, Views(), method,
-      views ? make_view
-        : function<unique_ptr<ViewPredictor>(const View&, long)>(),
+    Session session{corpus, statures, theories, make, Views(), make_view,
       predno, boost, scores, import_path.empty() && export_path.empty()};
     interaction(predictor, session);
   }
