@@ -1330,10 +1330,9 @@ view_queries=$'"p", "q"\n"r"@1.628, "t"@1.653, "q"@1.197, "u"@2.584, "z"@0.703, 
 typed_view_queries=$'"p"<c 1 "nat">, "q"\n"s"<c 0 "int">, "p"<c 1 _>@0.5\n"u"<c 1 "list"(_)>, "y"\n"y"\n"y", "p"@0.5\n"z"<v 0>, "q"<c 0 "nat">@0.5\n[theory=A]"p"<c 1 "int">, "s"'
 # in_view <view>: the queries $q, each with view=<view> in its scope
 in_view() { sed "s/^\[/[view=$1 /; t; s/^/[view=$1]/" <<<"$q"; }
-# the methods with views; the others refuse them
+# every method has views
 view_methods=(cosine cosine-dense knn "knn -c 0" mepo-cosine mepo "mepo -P"
-  nbayes nbayes-dense "nbayes -d 1" mash "mash -c 0" mesh)
-no_view_methods=(rforest)
+  nbayes nbayes-dense "nbayes -d 1" mash "mash -c 0" mesh rforest)
 
 # 45. a query on a view ranks as a process started on the view's theorems,
 # after views are created, changed and dropped, and the default view is as
@@ -1427,7 +1426,7 @@ done
 if [ -n "$msg" ]; then fail "views rank as fresh processes" "$msg"; else ok "views rank as fresh processes"; fi
 
 # 46. malformed version and view commands, and unknown views, are errors
-# before any change, and methods without views refuse them
+# before any change
 number=46
 msg=
 cp "$WORK/A1.thy" "$WORK/bad.thy"
@@ -1488,17 +1487,6 @@ $(store A 1)" 1 'already stored' &&
   rejected '!drop v1' 0 'Unknown view' &&
   rejected '[view=v1]"p"' 0 'Unknown view' &&
   rejected '[view=]"p"' 0 'Bad view'
-for m in "${no_view_methods[@]}"; do
-  [ -n "$msg" ] && break
-  for c in "$(store A 1)" "!view v1 $WORK/v1.view" '!drop v1' '[view=v1]"p"'; do
-    out=$(run dag -p $m -L "$WORK/dag.thy" <<<"$c")
-    status=$?
-    if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q -- "-p ${m%% *} yet" "$WORK/stderr"; then
-      msg="$m, '$c': exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
-      break
-    fi
-  done
-done
 if [ -n "$msg" ]; then fail "bad versions and views" "$msg"; else ok "bad versions and views"; fi
 
 # 47. on the first 3000 theorems of the synthetic corpus, cut into theories

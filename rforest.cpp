@@ -6,6 +6,7 @@
 #include "dtree.cpp"
 #include "predictor.cpp"
 #include "tfidf.cpp"
+#include "view.cpp"
 
 class RandomForest : public Predictor {
   public:
@@ -439,6 +440,51 @@ DecisionTree* RandomForest::grow_tree(const LVec& samples,
     DecisionTree *t_right = grow_tree(right, min_labels, features_freq);
     return new DecisionTree(t_left, t_right, best_f);
   }
+}
+
+
+// What rforest learns from a view: the forest a process started on the
+// view's theorems grows, from tables of those theorems in the view's order,
+// with features numbered by rank (View::ranks) as that process numbers them,
+// so that the trees draw the same samples and split on the same features.
+class RandomForestView : public ViewPredictor {
+  public:
+    RandomForestView(const View& view, long sym_num, long n_trees,
+      long n_samples, long n_features, double depweight);
+
+    LDPairVec predict_weighted(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    const View& view;
+    LVecVec deps, syms, sym_ths;  // as a process reads them, by rank
+    unique_ptr<RandomForest> forest;
+};
+
+RandomForestView::RandomForestView(const View& view, long sym_num,
+  long n_trees, long n_samples, long n_features, double depweight)
+: view(view), sym_ths(view.features()) {
+  const LVec table = view.rank_table(sym_num), ids = view.id_table();
+  for (const auto v : view.versions)
+    for (const auto& s : v->syms) {
+      const long i = syms.size();
+      deps.push_back(view.deps_of(i, ids));
+      syms.push_back(ranks_in(s, table));
+      for (const auto f : syms.back()) sym_ths[f].push_back(i);
+    }
+  forest.reset(new RandomForest(deps, syms, sym_ths, view.features(),
+    n_trees, n_samples, n_features, depweight));
+  forest->learn_all();
+}
+
+LDPairVec RandomForestView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  LVec csyms;
+  for (const auto& fw : query) csyms.push_back(view.rank_of(fw.first));
+  forest->set_scope(in_scope);
+  LDPairVec ans = forest->predict(csyms, view.size(), no_adv);
+  forest->set_scope(nullptr);
+  return ans;
 }
 
 #endif
