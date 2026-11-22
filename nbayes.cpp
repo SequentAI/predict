@@ -53,8 +53,9 @@ class NaiveBayes : public Predictor {
     // features
     size_t learned_deps(sample_t u) const;
     // adds [w] times the features of theorem u to [delta], a change of
-    // counts
+    // counts, unless [dense], which keeps no counts
     void gain(Counts& delta, sample_t u, long w) const {
+      if (dense) return;
       for (const auto f : syms[u]) delta.push_back(make_pair(f, w));
     }
     // adds [delta], the changes of some theorems' counts, to them, merging
@@ -170,7 +171,7 @@ void NaiveBayes::learn(sample_t from, sample_t to) {
   tfidf.resize(sym_num);
   const sample_t n = syms.size();
   tfreq.resize(n);
-  counts.resize(n);
+  if (!dense) counts.resize(n);
   users.resize(n);
   for (sample_t i = from; i < to; ++i)
     tfidf.add(syms[i]);
@@ -216,7 +217,7 @@ bool NaiveBayes::forget(sample_t from) {
     tfidf.remove(syms[u]);
   }
   tfreq.resize(from);
-  counts.resize(from);
+  if (!dense) counts.resize(from);
   users.resize(from);
   learned = from;
   if (dense) sfreqs.resize(from);
