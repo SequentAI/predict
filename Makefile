@@ -1,5 +1,9 @@
 CXX = g++
-CXXFLAGS = -O3 -std=c++17 -Wall
+# no fused multiply-adds, which GCC uses by default on some targets
+# (aarch64) wherever it sees fit, so that each expression is computed as
+# written, alike in every function and on every target
+FPFLAGS = -ffp-contract=off
+CXXFLAGS = -O3 -std=c++17 -Wall $(FPFLAGS)
 
 # In a clone, the commit comes from git; a source archive has it in main.cpp.
 # Only this directory's own .git counts, not that of a repository around it.
@@ -15,7 +19,7 @@ predict: $(SOURCES)
 
 # the tests also run on a build that checks memory accesses
 predict-checked: $(SOURCES)
-	$(CXX) -O1 -g -std=c++17 -Wall -D_GLIBCXX_ASSERTIONS $(COMMIT_FLAG) \
+	$(CXX) -O1 -g -std=c++17 -Wall $(FPFLAGS) -D_GLIBCXX_ASSERTIONS $(COMMIT_FLAG) \
 	  -fsanitize=address,undefined -fno-sanitize-recover=all main.cpp -o $@
 
 test: predict predict-checked
