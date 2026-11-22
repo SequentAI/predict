@@ -242,4 +242,71 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
   for (long i = 0; i < m; ++i) corpus.th_no[corpus.no_th[i]] = i;
 }
 
+/* The first theorem of theory [t] (-1 for none), or the number of theorems
+   if it has none, if the corpus is untyped, its theorems are the last ones,
+   no other theorem depends on one of them, and the features beyond the first
+   [kept_syms] that its theorems were the first to have come after all the
+   others and belong to no other theorem, so that removing them leaves the
+   others, and the features' numbers, as a process given only the others
+   has them; -1 otherwise. */
+long last_theory_start(const Corpus& corpus, const Theories& theories,
+                       long t, long kept_syms) {
+  long from = theories.of.size();
+  if (corpus.types) return -1;
+  if (t == -1) return from;
+  while (from > 0 && theories.of[from - 1] == t) --from;
+  for (long i = 0; i < from; ++i) {
+    if (theories.of[i] == t) return -1;
+    for (const auto d : corpus.deps[i])
+      if (d >= from) return -1;
+  }
+  // sym_ths lists a feature's theorems in the order <syms> gave them, so
+  // its first theorem is the one that numbered it
+  const long sym_num = corpus.sym_ths.size();
+  long first_new = sym_num;
+  for (long i = from; i < (long)corpus.syms.size(); ++i)
+    for (const auto s : corpus.syms[i])
+      if (s >= kept_syms && corpus.sym_ths[s][0] >= from)
+        first_new = min(first_new, s);
+  for (long s = first_new; s < sym_num; ++s)
+    for (const auto i : corpus.sym_ths[s])
+      if (i < from) return -1;
+  return from;
+}
+
+/* Removes the theorems [from, n) from the untyped [corpus], [statures] and
+   [theories], as last_theory_start allows, then the features at the end
+   that no theorem has, down to [kept_syms] features. */
+void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
+                      Theories& theories, long from, long kept_syms) {
+  const long n = corpus.no_th.size();
+  LVec dropped;
+  for (long i = from; i < n; ++i) {
+    dropped.insert(dropped.end(), corpus.syms[i].begin(),
+      corpus.syms[i].end());
+    corpus.th_no.erase(corpus.no_th[i]);
+  }
+  sort(dropped.begin(), dropped.end());
+  dropped.erase(unique(dropped.begin(), dropped.end()), dropped.end());
+  // not always at the end of the list: <syms> may give a feature to a
+  // theorem before [from] after one at or past it
+  for (const auto s : dropped) {
+    LVec& ths = corpus.sym_ths[s];
+    ths.erase(remove_if(ths.begin(), ths.end(),
+      [&](long i) { return i >= from; }), ths.end());
+  }
+  corpus.no_th.resize(from);
+  corpus.deps.resize(from);
+  corpus.syms.resize(from);
+  statures.resize(from);
+  theories.of.resize(from);
+  theories.priv.resize(from);
+  while ((long)corpus.no_sym.size() > kept_syms &&
+         corpus.sym_ths.back().empty()) {
+    corpus.sym_no.erase(feature_hash(corpus.no_sym.back()));
+    corpus.no_sym.pop_back();
+    corpus.sym_ths.pop_back();
+  }
+}
+
 #endif

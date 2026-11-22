@@ -30,6 +30,21 @@ class Tfidf {
       thv = log(++thn);
     }
 
+    // undoes add(syms), leaving what a Tfidf never given them holds
+    void remove(const LVec &syms) {
+      for (const auto& sym : syms) {
+        freq[sym]--;
+        a[sym] = freq[sym] ? log(freq[sym]) : 0;
+      }
+      thv = --thn ? log(thn) : 0;
+    }
+
+    // to [sym_num] features; features dropped have no theorems
+    void resize(long sym_num) {
+      freq.resize(sym_num, 0);
+      a.resize(sym_num, 0);
+    }
+
     void add_many(const LVecVec &syms) {
       for (const auto& sx : syms)
         for (const auto& sy : sx)

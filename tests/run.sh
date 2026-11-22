@@ -1220,8 +1220,9 @@ done
 [ -n "$msg" ] || same_as_fresh t "$queries"$'\n'"$typed_queries" -p mepo -P -F "$WORK/tdag.statures"
 if [ -n "$msg" ]; then fail "!add and !replace" "$msg"; else ok "!add and !replace"; fi
 
-# 43. malformed scopes and commands are errors, commands need a corpus that
-# can change, so not -x or -y, and -P still does not work with snapshots
+# 43. malformed scopes and commands are errors, as are command files giving
+# an earlier theorem a feature, commands need a corpus that can change, so
+# not -x or -y, and -P still does not work with snapshots
 number=43
 msg=
 for q in '[before=2]"p"' '[k=0]"p"' '[k=x]"p"' '[size=3]"p"' '[k=2 k=3]"p"' '[exclude=]"p"' '[k=2"p"' '!remove Script' '!add a b c'; do
@@ -1237,6 +1238,14 @@ for c in "!add $WORK/down.syms $WORK/down.deps $WORK/missing.seq $WORK/down.thy"
     msg="'$c' with a missing file: exit status $status, output '$out'"
   fi
 done
+if [ -z "$msg" ]; then
+  { cat "$WORK/down.syms"; printf '%s:"zz"\n' "$(head -1 "$WORK/up.seq")"; } > "$WORK/old.syms"
+  out=$(run up -p cosine -L "$WORK/up.thy" <<<"!add $WORK/old.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy")
+  status=$?
+  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q "which the command does not add" "$WORK/stderr"; then
+    msg="!add giving a feature to an earlier theorem: exit status $status, output '$out'"
+  fi
+fi
 for o in -x -y; do
   [ -n "$msg" ] && break
   out=$(run dag -p cosine $o "$WORK/none" <<<"!add $WORK/down.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy")
@@ -1566,5 +1575,115 @@ for q in '"g"' '"f"' '"f", "g"'; do
   fi
 done
 if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "feature repeated across lines"; fi
+
+# 49. a process started on a snapshot of the first 2000 theorems of the
+# synthetic corpus and a theory T, or on those theorems alone and `!add`ing
+# T, ranks after each `!replace` of its last theory (to fewer theorems, to
+# theorems with other features, to none) and `!add` as a
+# process started on the snapshot and the theorems it then holds after it,
+# scores included, for every method; so does one whose <syms> gives T's
+# features before those of a theory before it. T depends on the theorems before and
+# on later ones; MePo predicts 50 on the checked build, as in 47.
+number=49
+LIMIT=600
+msg=
+for f in seq syms deps; do cat "$WORK"/S[0-3]a.$f > "$WORK/b.$f"; done
+checked b -o "$WORK/b.snap" </dev/null
+# tail <name> <theory> <first line> <last line> [<syms from line>]: theorems
+# of S5a, or of S4a for <first line> 0, as <theory>; their features those of
+# the synthetic corpus from the given line on, if given
+tail_theory() {
+  local name=$1 thy=$2 first=$3 last=$4 from=${5:-} src=S5a
+  [ "$first" = 0 ] && { src=S4a; first=1; }
+  sed -n "${first},${last}p" "$WORK/$src.seq" > "$WORK/$name.seq"
+  sed -n "${first},${last}p" "$WORK/$src.deps" > "$WORK/$name.deps"
+  if [ -n "$from" ]; then
+    paste -d: "$WORK/$name.seq" <(sed -n "${from},\$p" "$WORK/synth.syms" |
+      head -n "$(wc -l < "$WORK/$name.seq")" | cut -d: -f2-) > "$WORK/$name.syms"
+  else
+    sed -n "${first},${last}p" "$WORK/$src.syms" > "$WORK/$name.syms"
+  fi
+  sed "s/\$/:$thy/" "$WORK/$name.seq" > "$WORK/$name.thy"
+}
+tail_theory T1 T 0 500
+tail_theory T2 T 1 50
+tail_theory T3 T 51 150 1001
+tail_theory U U 151 200
+# U, added before T, depends on none of it, as in a process started on both
+sed -i 's/:.*/:/' "$WORK/U.deps"
+# features no theorem before has, numbered otherwise by T's two versions
+sed -i '1,5s/$/, "n0", "n1", "n2", "n3", "n4", "n5"/' "$WORK/T1.syms"
+sed -i '1,5s/$/, "n5", "n4", "n3", "n2", "n1", "n0"/' "$WORK/T2.syms"
+for f in seq syms deps thy; do : > "$WORK/E.$f"; done
+fresh UT1 U T1
+fresh UT2 U T2
+fresh UT3 U T3
+{ cat "$WORK/T3.syms"; cat "$WORK/U.syms"; } > "$WORK/UT3.syms"
+files() { echo "$WORK/$1.syms $WORK/$1.deps $WORK/$1.seq $WORK/$1.thy"; }
+qs=$(head -3 "$WORK/synth.wqueries"; echo '"n0", "n2", "n4", "f1"')
+# and with the features of a theorem of U and of one of T2
+uqs=$(echo "$qs"; head -1 "$WORK/U.syms" | cut -d: -f2-; head -1 "$WORK/T2.syms" | cut -d: -f2-)
+commands="!replace T $(files T2)
+$qs
+!replace T $(files T3)
+$qs
+!replace T $(files E)
+$qs
+!add $(files U)
+$qs
+!replace T $(files T1)
+$qs
+!replace T $(files T2)
+$qs"
+for m in $methods nbayes-dense cosine-dense rforest; do
+  n=300
+  case $m in mepo|mesh) n=50 ;; esac
+  # from_snap <tail>: the answers of a process started on the snapshot and
+  # <tail>
+  from_snap() { checked $1 -i "$WORK/b.snap" -L "$WORK/$1.thy" -p $m -n $n -S <<<"$qs"; }
+  later="$(from_snap T2)
+2100
+$(from_snap T3)
+2000
+$(from_snap E)
+2050
+$(from_snap U)
+2550
+$(from_snap UT1)
+2100
+$(from_snap UT2)"
+  want="$(from_snap T1)
+2050
+$later"
+  out=$(note='with !replace of the last theory' checked T1 -i "$WORK/b.snap" -L "$WORK/T1.thy" -p $m -n $n -S <<<"$qs
+$commands")
+  if [ "$out" != "$want" ]; then
+    msg="$m, started on the snapshot and T: '$out', not '$want'"
+    break
+  fi
+  want="$(from_snap E)
+2500
+$(from_snap T1)
+2050
+$later"
+  out=$(note='with !add and !replace of the last theory' checked b -p $m -n $n -S <<<"$qs
+!add $(files T1)
+$qs
+$commands")
+  if [ "$out" != "$want" ]; then
+    msg="$m, started on the first theorems: '$out', not '$want'"
+    break
+  fi
+  want="2100
+$(checked UT2 -i "$WORK/b.snap" -L "$WORK/UT2.thy" -p $m -n $n -S <<<"$uqs")"
+  out=$(note='with !replace of a theory given features first' checked UT3 -i "$WORK/b.snap" -L "$WORK/UT3.thy" -p $m -n $n -S <<<"!replace T $(files T2)
+$uqs")
+  if [ "$out" != "$want" ]; then
+    msg="$m, its <syms> giving T's features first: '$out', not '$want'"
+    break
+  fi
+done
+if [ -n "$msg" ]; then fail "!replace of the last theory" "$msg"; else ok "!replace of the last theory"; fi
+LIMIT=5
 
 [ $failures -eq 0 ]

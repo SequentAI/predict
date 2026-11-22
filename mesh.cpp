@@ -70,6 +70,7 @@ class MaSh : public Predictor {
       long sym_num, long max_deps, bool credit_deps);
 
     void learn(long from, long to);
+    bool forget(long from) { return knn.forget(from) && nbayes.forget(from); }
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
@@ -175,6 +176,7 @@ class MeSh : public Predictor {
       bool credit_deps, bool over);
 
     void learn(long from, long to);
+    bool forget(long from) { return mepo.forget(from) && mash.forget(from); }
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
