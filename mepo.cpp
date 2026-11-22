@@ -42,6 +42,11 @@ class MePoRanking {
 
     template <class Facts>
     void learn(const Facts& facts, long from, long to);
+    // Untyped: unlearns facts [from, size()), as Predictor::forget.
+    template <class Facts>
+    void forget(const Facts& facts, long from);
+    // to [sym_num] untyped features; features dropped have no facts
+    void resize(long sym_num) { freq.resize(sym_num, 0); }
     // A query feature weighing less than 1 occurs only in the goal's
     // assumptions; one weighing 1 or more occurs in its conclusion.
     template <class Facts>
@@ -102,6 +107,8 @@ class MePo : public Predictor {
       const TypedSyms* freq_only = nullptr);
 
     void learn(long from, long to);
+    // untyped only
+    bool forget(long from);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     // as MePoRanking's
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
@@ -127,7 +134,7 @@ class MePo : public Predictor {
       }
     };
 
-    vector<unsigned char> statures;
+    const vector<unsigned char>& statures;
     const TypedSyms* typed;
     const TypedSyms* freq_only;
     MePoRanking ranking;
@@ -168,7 +175,14 @@ MePo::MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
   freq_only(freq_only), ranking(sym_num, typed ? types : nullptr) {}
 
 void MePo::learn(long from, long to) {
+  ranking.resize(sym_ths.size());
   ranking.learn(Facts{*this}, from, to);
+}
+
+bool MePo::forget(long from) {
+  if (typed) return false;
+  ranking.forget(Facts{*this}, from);
+  return true;
 }
 
 LDPairVec MePo::predict(const LVec& csyms, long maxth, long no_adv) const {
@@ -185,6 +199,13 @@ LDPairVec MePo::predict_weighted(const LDPairVec& query, long maxth,
 LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
   long no_adv) const {
   return ranking.predict_typed(Facts{*this}, query, maxth, no_adv);
+}
+
+template <class Facts>
+void MePoRanking::forget(const Facts& facts, long from) {
+  for (long i = from; i < facts.size(); ++i)
+    for (const auto s : facts.syms(i))
+      --freq[s];
 }
 
 template <class Facts>

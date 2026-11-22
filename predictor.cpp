@@ -6,7 +6,8 @@
 #include "tfidf.cpp"
 
 // A predictor refers to the corpus tables it is given, without copying them:
-// they must outlive it, and a change to them needs a new predictor.
+// they must outlive it. A change to them needs a new predictor, except
+// theorems added or removed at the end, which forget and learn follow.
 class Predictor {
   public:
     Predictor(const LVecVec& deps, const LVecVec& syms,
@@ -14,6 +15,12 @@ class Predictor {
     virtual ~Predictor() {}
 
     virtual void learn(long from, long to) = 0;  // learn [from, ..., to)
+    // Unlearns the theorems [from, n) of the n learned, while the corpus
+    // still holds them, so that once the corpus has dropped them (and its
+    // features no theorem has any more, at the end) and added others,
+    // learn(from, n') leaves the predictor as a new one's learn_all() does.
+    // Returns false if this predictor cannot, possibly changed.
+    virtual bool forget(long from) { return false; }
     void learn_all();
 
     LDPairVec predict(long i, long maxth, long no_adv);

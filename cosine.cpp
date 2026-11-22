@@ -15,6 +15,7 @@ class Cosine : public Predictor {
       long sym_num, bool dense);
 
     void learn(long from, long to);
+    bool forget(long from);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
@@ -33,10 +34,7 @@ class Cosine : public Predictor {
 
 Cosine::Cosine(const LVecVec& deps, const LVecVec& syms,
   const LVecVec& sym_ths, long sym_num, bool dense)
-: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), dense(dense),
-  sorted_syms(syms) {
-  for (auto& s : sorted_syms) sort(s.begin(), s.end());
-}
+: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), dense(dense) {}
 
 double Cosine::norm2(long i) const {
   double n = 0;
@@ -48,6 +46,11 @@ double Cosine::norm2(long i) const {
 }
 
 void Cosine::learn(long from, long to) {
+  tfidf.resize(sym_ths.size());
+  for (long i = sorted_syms.size(); i < (long)syms.size(); ++i) {
+    sorted_syms.push_back(syms[i]);
+    sort(sorted_syms.back().begin(), sorted_syms.back().end());
+  }
   for (long i = from; i < to; ++i)
     tfidf.add(syms[i]);
 
@@ -57,6 +60,13 @@ void Cosine::learn(long from, long to) {
     for (long i = 0; i < to; ++i)
       norms2[i] = norm2(i);
   }
+}
+
+bool Cosine::forget(long from) {
+  for (long i = from; i < (long)syms.size(); ++i)
+    tfidf.remove(syms[i]);
+  sorted_syms.resize(from);
+  return true;
 }
 
 LDPairVec Cosine::predict(const LVec& csyms, long maxth, long no_adv) const {

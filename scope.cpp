@@ -242,4 +242,48 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
   for (long i = 0; i < m; ++i) corpus.th_no[corpus.no_th[i]] = i;
 }
 
+/* The first theorem of theory [t] (-1 for none), or the number of theorems
+   if it has none, if the corpus is untyped, its theorems are the last ones
+   and no other theorem depends on one of them, so that removing them leaves
+   the others as they are; -1 otherwise. */
+long last_theory_start(const Corpus& corpus, const Theories& theories,
+                       long t) {
+  long from = theories.of.size();
+  if (corpus.types) return -1;
+  if (t == -1) return from;
+  while (from > 0 && theories.of[from - 1] == t) --from;
+  for (long i = 0; i < from; ++i) {
+    if (theories.of[i] == t) return -1;
+    for (const auto d : corpus.deps[i])
+      if (d >= from) return -1;
+  }
+  return from;
+}
+
+/* Removes the theorems [from, n) from the untyped [corpus], [statures] and
+   [theories], as last_theory_start allows, then the features at the end
+   that no theorem has, down to [kept_syms] features: a process given only
+   the theorems before [from] numbers the features of theorems added next
+   alike. */
+void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
+                      Theories& theories, long from, long kept_syms) {
+  const long n = corpus.no_th.size();
+  for (long i = from; i < n; ++i) {
+    for (const auto s : corpus.syms[i]) corpus.sym_ths[s].pop_back();
+    corpus.th_no.erase(corpus.no_th[i]);
+  }
+  corpus.no_th.resize(from);
+  corpus.deps.resize(from);
+  corpus.syms.resize(from);
+  statures.resize(from);
+  theories.of.resize(from);
+  theories.priv.resize(from);
+  while ((long)corpus.no_sym.size() > kept_syms &&
+         corpus.sym_ths.back().empty()) {
+    corpus.sym_no.erase(feature_hash(corpus.no_sym.back()));
+    corpus.no_sym.pop_back();
+    corpus.sym_ths.pop_back();
+  }
+}
+
 #endif

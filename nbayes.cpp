@@ -6,6 +6,8 @@
 
 typedef long feature_t;
 typedef long sample_t;
+// (feature, count) pairs
+typedef vector<pair<feature_t, long> > Counts;
 
 // Naive Bayes in the form of Isabelle's MaSh. With t = tfreq[i] and
 // s_f = sfreq[i][f], S the features in sfreq[i] and G the query's, theorem
@@ -37,6 +39,7 @@ class NaiveBayes : public Predictor {
       const LVecVec& sym_ths, long sym_num, long max_deps, bool dense);
 
     void learn(long from, long to);
+    bool forget(long from);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
@@ -46,14 +49,40 @@ class NaiveBayes : public Predictor {
     void settle(LDPairVec& ans, const LDPairVec& query, long no_adv,
       double c) const;
 
-    void learn(const LVec& csyms, sample_t i, const LVec& cdeps);
-    void add_sample_freqs(const LVec& csyms, sample_t i, long weight);
+    // the number of the first dependencies of theorem u that learn its
+    // features
+    size_t learned_deps(sample_t u) const;
+    // adds [w] times the features of theorem u to [delta], a change of
+    // counts
+    void gain(Counts& delta, sample_t u, long w) const {
+      for (const auto f : syms[u]) delta.push_back(make_pair(f, w));
+    }
+    // adds [delta], the changes of some theorems' counts, to them, merging
+    // each theorem's once
+    void apply(map<sample_t, Counts>& delta);
+    // counts[i] and tfreq[i] of each theorem i, from the users of the
+    // theorems [0, to) learned
+    void count_all(sample_t to);
+    // Theorem i's sfreq: its counts in the order an unordered_map adding up
+    // its own features and those of its users, in learn order, iterates
+    // them, which score() sums in.
+    unordered_map<feature_t, long> sfreq(sample_t i) const;
     void index();
 
-    // tfreq[t] = number of theorems having t as dependency
+    // the theorems [0, learned) are learned
+    sample_t learned = 0;
+    // tfreq[t] = number of theorems having t as dependency, 1000 for t
+    // itself
     vector<long> tfreq;
-    // sfreq[t][f] = number of theorems having f and having t as dependency
-    vector<unordered_map <feature_t, long> > sfreq;
+    // counts[t] = the (f, number of theorems having f and having t as
+    // dependency, 1000 for t itself) in increasing order of f, for each f
+    // with a nonzero number
+    vector<Counts> counts;
+    // users[t] = the theorems learning t as a dependency, in learn order
+    // (once for each time)
+    LVecVec users;
+    // with [dense], each learned theorem's sfreq, which every query reads
+    vector<unordered_map<feature_t, long> > sfreqs;
 
     Tfidf tfidf;
     long sym_num, max_deps;
@@ -74,21 +103,122 @@ class NaiveBayes : public Predictor {
 NaiveBayes::NaiveBayes(const LVecVec& deps, const LVecVec& syms,
   const LVecVec& sym_ths, long sym_num, long max_deps, bool dense)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), sym_num(sym_num),
-  max_deps(max_deps), dense(dense) {
-  tfreq.resize(deps.size());
-  sfreq.resize(deps.size(), unordered_map <feature_t, long> (100));
+  max_deps(max_deps), dense(dense) {}
+
+// Adds the weight of each (feature, weight) pair of [delta] to the counts
+// [c], dropping those that reach 0.
+void add_counts(Counts& c, Counts delta) {
+  sort(delta.begin(), delta.end());
+  Counts out;
+  out.reserve(c.size() + delta.size());
+  auto p = c.begin();
+  for (size_t k = 0; k < delta.size(); ) {
+    const feature_t f = delta[k].first;
+    long s = 0;
+    for (; k < delta.size() && delta[k].first == f; ++k) s += delta[k].second;
+    for (; p != c.end() && p->first < f; ++p) out.push_back(*p);
+    if (p != c.end() && p->first == f) s += (p++)->second;
+    if (s != 0) out.push_back(make_pair(f, s));
+  }
+  out.insert(out.end(), p, c.end());
+  c.swap(out);
+}
+
+void NaiveBayes::apply(map<sample_t, Counts>& delta) {
+  for (auto& td : delta) {
+    add_counts(counts[td.first], move(td.second));
+    if (dense && td.first < learned) sfreqs[td.first] = sfreq(td.first);
+  }
+}
+
+size_t NaiveBayes::learned_deps(sample_t u) const {
+  return max_deps > 0 ? min(deps[u].size(), (size_t)max_deps)
+                      : deps[u].size();
+}
+
+void NaiveBayes::count_all(sample_t to) {
+  const sample_t n = syms.size();
+  for (sample_t u = 0; u < to; ++u)
+    for (size_t k = 0; k < learned_deps(u); ++k)
+      users[deps[u][k]].push_back(u);
+
+  LVec acc(sym_num, 0), touched;
+  const auto add = [&](sample_t j, long w) {
+    for (const auto f : syms[j]) {
+      if (acc[f] == 0) touched.push_back(f);
+      acc[f] += w;
+    }
+  };
+  for (sample_t i = 0; i < n; ++i) {
+    tfreq[i] = (i < to ? 1000 : 0) + users[i].size();
+    if (i < to) add(i, 1000);
+    for (const auto u : users[i]) add(u, 1);
+    sort(touched.begin(), touched.end());
+    for (const auto f : touched) {
+      counts[i].push_back(make_pair(f, acc[f]));
+      acc[f] = 0;
+    }
+    touched.clear();
+  }
 }
 
 void NaiveBayes::learn(sample_t from, sample_t to) {
+  sym_num = sym_ths.size();
+  tfidf.resize(sym_num);
+  const sample_t n = syms.size();
+  tfreq.resize(n);
+  counts.resize(n);
+  users.resize(n);
   for (sample_t i = from; i < to; ++i)
     tfidf.add(syms[i]);
 
-  for (sample_t i = from; i < to; i++)
-    learn(syms[i], i, deps[i]);
+  const bool first = learned == 0;
+  map<sample_t, Counts> delta;
+  if (!first)
+    for (sample_t u = from; u < to; ++u) {
+      tfreq[u] += 1000;
+      gain(delta[u], u, 1000);
+      for (size_t k = 0; k < learned_deps(u); ++k) {
+        const sample_t d = deps[u][k];
+        users[d].push_back(u);
+        ++tfreq[d];
+        gain(delta[d], u, 1);
+      }
+    }
+  learned = to;
+  if (dense) sfreqs.resize(to);
+  if (first) {
+    count_all(to);
+    if (dense)
+      for (sample_t i = 0; i < to; ++i) sfreqs[i] = sfreq(i);
+  }
+  else
+    apply(delta);
 
   // idf changes with every learned theorem, so every entry changes
   if (!dense)
     index();
+}
+
+bool NaiveBayes::forget(sample_t from) {
+  map<sample_t, Counts> delta;
+  for (sample_t u = learned - 1; u >= from; --u) {
+    for (size_t k = learned_deps(u); k-- > 0; ) {
+      const sample_t d = deps[u][k];
+      if (d >= from) continue;
+      users[d].pop_back();
+      --tfreq[d];
+      gain(delta[d], u, -1);
+    }
+    tfidf.remove(syms[u]);
+  }
+  tfreq.resize(from);
+  counts.resize(from);
+  users.resize(from);
+  learned = from;
+  if (dense) sfreqs.resize(from);
+  apply(delta);
+  return true;
 }
 
 void NaiveBayes::index() {
@@ -96,23 +226,20 @@ void NaiveBayes::index() {
 
   post_start.assign(sym_num + 1, 0);
   for (sample_t i = 0; i < n; ++i)
-    for (const auto& sv : sfreq[i])
-      ++post_start[sv.first + 1];
+    for (const auto& fs : counts[i])
+      ++post_start[fs.first + 1];
   for (long f = 0; f < sym_num; ++f)
     post_start[f + 1] += post_start[f];
   postings.resize(post_start[sym_num]);
 
   vector<size_t> next(post_start.begin(), post_start.end() - 1);
   base.resize(n);
-  vector<pair<feature_t, long> > sv;
   for (sample_t i = 0; i < n; ++i) {
     const long t = tfreq[i];
     base[i] = 30 * log(t);
     // in feature order, so that theorems with equal statistics get equal
     // baselines
-    sv.assign(sfreq[i].begin(), sfreq[i].end());
-    sort(sv.begin(), sv.end());
-    for (const auto& fs : sv) {
+    for (const auto& fs : counts[i]) {
       const double idf = tfidf.get(fs.first);
       const double s = fs.second;
       const double b = idf * 0.2 * log(1 + (1 - s) / t);
@@ -239,7 +366,10 @@ double score_nbayes(long n, const unordered_map<feature_t, long>& sfreqh,
 }
 
 double NaiveBayes::score(sample_t i, map<feature_t, double> symh) const {
-  return score_nbayes(tfreq[i], sfreq[i], move(symh), tfidf);
+  if (dense)
+    return score_nbayes(tfreq[i], sfreqs[i], move(symh), tfidf);
+  // only near ties need it
+  return score_nbayes(tfreq[i], sfreq(i), move(symh), tfidf);
 }
 
 void add_sym(unordered_map <feature_t, long> &m, feature_t sym, long w) {
@@ -248,16 +378,32 @@ void add_sym(unordered_map <feature_t, long> &m, feature_t sym, long w) {
   else         (itr->second) += w;
 }
 
-void NaiveBayes::add_sample_freqs(const LVec& csyms, sample_t i, long w) {
-  tfreq[i] += w;
-  for (const auto s : csyms) add_sym(sfreq[i], s, w);
+// Theorem i's sfreq as NaiveBayes::learn added it up: from an empty map,
+// [add](m, j, w) adding the features of theorem j to m with weight w, for
+// each user u in [users, users_end) (in learn order), and for i itself with
+// weight 1000 if [self], i learning itself before the theorems after it.
+template <class Add>
+unordered_map<feature_t, long> replay_sfreq(long i, const long* users,
+  const long* users_end, bool self, Add add) {
+  // a copy of an empty map, as each theorem's was before it learned
+  static const unordered_map<feature_t, long> empty(100);
+  unordered_map<feature_t, long> m(empty);
+  for (; users != users_end; ++users) {
+    if (self && *users >= i) {
+      add(m, i, 1000);
+      self = false;
+    }
+    add(m, *users, 1);
+  }
+  if (self) add(m, i, 1000);
+  return m;
 }
 
-void NaiveBayes::learn(const LVec& csyms, sample_t i, const LVec& cdeps) {
-  add_sample_freqs(csyms, i, 1000);
-  const size_t n = max_deps > 0 ? min(cdeps.size(), (size_t)max_deps)
-                                : cdeps.size();
-  for (size_t k = 0; k < n; ++k) add_sample_freqs(csyms, cdeps[k], 1);
+unordered_map<feature_t, long> NaiveBayes::sfreq(sample_t i) const {
+  return replay_sfreq(i, users[i].data(), users[i].data() + users[i].size(),
+    i < learned, [&](unordered_map<feature_t, long>& m, long j, long w) {
+      for (const auto f : syms[j]) add_sym(m, f, w);
+    });
 }
 
 // NaiveBayes's ranking of the theorems of a view, computed as NaiveBayes
@@ -351,20 +497,11 @@ void NaiveBayesView::add(unordered_map<feature_t, long>& m, long j,
 
 unordered_map<feature_t, long> NaiveBayesView::sfreq(long i,
   const LVec* table) const {
-  // NaiveBayes's sfreq starts from a copy of this
-  static const unordered_map<feature_t, long> empty(100);
-  unordered_map<feature_t, long> m(empty);
-  // theorem i learns itself before the theorems after it
-  bool self = false;
-  for (long u = user_start[i]; u < user_start[i + 1]; ++u) {
-    if (!self && users[u] >= i) {
-      add(m, i, 1000, table);
-      self = true;
-    }
-    add(m, users[u], 1, table);
-  }
-  if (!self) add(m, i, 1000, table);
-  return m;
+  return replay_sfreq(i, users.data() + user_start[i],
+    users.data() + user_start[i + 1], true,
+    [&](unordered_map<feature_t, long>& m, long j, long w) {
+      add(m, j, w, table);
+    });
 }
 
 double NaiveBayesView::score(long i, map<feature_t, double> symh) const {

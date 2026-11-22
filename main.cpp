@@ -101,6 +101,8 @@ struct Session {
   bool scores;
   // whether the corpus may change (the commands)
   bool growable;
+  // the number of features of the snapshot the process started on, if any
+  long snapshot_syms;
 };
 
 // Exits unless [file], named in the command [line], can be read: a
@@ -125,11 +127,20 @@ vector<string> command_files(const string& args, const string& line) {
 }
 
 // Adds the theorems of [files], as command_files gives them, after the
-// others.
-void add_theorems(Session& s, const vector<string>& files) {
+// others, for the command [line].
+void add_theorems(Session& s, const vector<string>& files,
+  const string& line) {
   const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
     &theoriesf = files[3];
   Corpus& c = s.corpus;
+  const long old_n = c.no_th.size();
+  // the theorems before keep their dependencies and features
+  auto sizes = [&]() {
+    size_t k = 0;
+    for (long i = 0; i < old_n; ++i) k += c.deps[i].size() + c.syms[i].size();
+    return k;
+  };
+  const size_t old_sizes = sizes();
   read_order(seqf, c.th_no, c.no_th);
   const long n = c.no_th.size();
   c.deps.resize(n);
@@ -144,6 +155,9 @@ void add_theorems(Session& s, const vector<string>& files) {
   long sym_num = c.no_sym.size();
   read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym,
     c.types, &c.typed, &c.freq_only);
+  if (sizes() != old_sizes)
+    exit_error("A dependency or feature of a theorem not added by `" + line +
+               "' is in its files!");
   read_theories(theoriesf, c.th_no, s.theories);
 }
 
@@ -229,12 +243,24 @@ void drop_view(Session& s, const string& args, const string& line) {
   s.views.drop_unused();
 }
 
+// After a command changed the corpus: [p] learns the theorems from [from]
+// on if it [kept] what it learned before them, else a new predictor learns
+// them all.
+void relearn(Session& s, unique_ptr<Predictor>& p, bool kept, long from) {
+  if (kept)
+    p->learn(from, s.corpus.no_th.size());
+  else {
+    p = s.make();
+    p->learn_all();
+  }
+}
+
 // Runs the command [line]: `!add <syms> <deps> <seq> <theories>` adds
 // theorems after the others, `!replace <theory> <syms> <deps> <seq>
-// <theories>` removes the theorems of <theory> first; `!version`, `!view`
-// and `!drop` change the versions and views. Returns whether the theorems
-// of the process (not those of versions) changed.
-bool command(Session& s, const string& line) {
+// <theories>` removes the theorems of <theory> first, and [p] then ranks as
+// a predictor learning the changed corpus would; `!version`, `!view` and
+// `!drop` change the versions and views.
+void command(Session& s, const string& line, unique_ptr<Predictor>& p) {
   if (!s.growable)
     exit_error("`" + line + "' does not work with -y or -x!");
   const size_t word = min(line.find(' '), line.size());
@@ -246,8 +272,11 @@ bool command(Session& s, const string& line) {
   else if (name == "!drop")
     drop_view(s, args, line);
   else if (line.rfind("!add ", 0) == 0) {
-    add_theorems(s, command_files(line.substr(5), line));
-    return true;
+    const vector<string> files = command_files(line.substr(5), line);
+    const long from = s.corpus.no_th.size();
+    const bool kept = p->forget(from);
+    add_theorems(s, files, line);
+    relearn(s, p, kept, from);
   }
   else if (line.rfind("!replace ", 0) == 0) {
     const size_t space = line.find(' ', 9);
@@ -257,13 +286,20 @@ bool command(Session& s, const string& line) {
                  "<theories>', not `" + line + "'!");
     const vector<string> files = command_files(line.substr(space + 1), line);
     const long t = s.theories.find(theory);
-    if (t != -1) remove_theory(s.corpus, s.statures, s.theories, t);
-    add_theorems(s, files);
-    return true;
+    // the theory's theorems are cut off the end if they are the last ones,
+    // unlearned if the predictor can, else removed
+    const long from = last_theory_start(s.corpus, s.theories, t);
+    const bool kept = from != -1 && p->forget(from);
+    if (from != -1)
+      drop_last_theory(s.corpus, s.statures, s.theories, from,
+        s.snapshot_syms);
+    else if (t != -1)
+      remove_theory(s.corpus, s.statures, s.theories, t);
+    add_theorems(s, files, line);
+    relearn(s, p, kept, from);
   }
   else
     exit_error("Unknown command `" + line + "'!");
-  return false;
 }
 
 // Answers the query [line], whose scope [scope] ends at [start], on the
@@ -326,10 +362,7 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
   while (getline(cin, line)) {
     const long n = s.corpus.no_th.size();
     if (!line.empty() && line[0] == '!') {
-      if (command(s, line)) {
-        p = s.make();
-        p->learn_all();
-      }
+      command(s, line, p);
       cout << s.corpus.no_th.size() + s.views.theorems() << endl;
       continue;
     }
@@ -599,6 +632,7 @@ int main(int argc, char* argv[]) {
     }
     sym_num = no_sym.size();
   }
+  const long snapshot_syms = sym_num;
 
   read_order(seqf, th_no, no_th);
 
@@ -696,7 +730,8 @@ int main(int argc, char* argv[]) {
       return p;
     };
     Session session{corpus, statures, theories, make, Views(), make_view,
-      predno, boost, scores, import_path.empty() && export_path.empty()};
+      predno, boost, scores, import_path.empty() && export_path.empty(),
+      snapshot_syms};
     interaction(predictor, session);
   }
   else

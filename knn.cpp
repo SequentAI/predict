@@ -9,6 +9,7 @@ class kNN : public Predictor {
       long sym_num, bool credit_deps);
 
     void learn(long from, long to);
+    bool forget(long from);
 
   protected:
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
@@ -25,8 +26,15 @@ kNN::kNN(const LVecVec& deps, const LVecVec& syms,
 }
 
 void kNN::learn(long from, long to) {
+  tfidf.resize(sym_ths.size());
   for (long i = from; i < to; ++i)
     tfidf.add(syms[i]);
+}
+
+bool kNN::forget(long from) {
+  for (long i = from; i < (long)syms.size(); ++i)
+    tfidf.remove(syms[i]);
+  return true;
 }
 
 inline double age(long k) {
