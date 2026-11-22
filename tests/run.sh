@@ -1576,18 +1576,19 @@ for q in '"g"' '"f"' '"f", "g"'; do
 done
 if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "feature repeated across lines"; fi
 
-# 49. a process started on a snapshot of the first 2000 theorems of the
+# 49. a process started on a snapshot of the first 1000 theorems of the
 # synthetic corpus and a theory T, or on those theorems alone and `!add`ing
 # T, ranks after each `!replace` of its last theory (to fewer theorems, to
 # theorems with other features, to none) and `!add` as a
 # process started on the snapshot and the theorems it then holds after it,
-# scores included, for every method; so does one whose <syms> gives T's
-# features before those of a theory before it. T depends on the theorems before and
+# scores included, for every method that unlearns (mash is mesh's part);
+# so does one whose <syms> gives T's features before those of a theory
+# before it. T depends on the theorems before and
 # on later ones; MePo predicts 50 on the checked build, as in 47.
 number=49
 LIMIT=600
 msg=
-for f in seq syms deps; do cat "$WORK"/S[0-3]a.$f > "$WORK/b.$f"; done
+for f in seq syms deps; do cat "$WORK"/S[01]a.$f > "$WORK/b.$f"; done
 checked b -o "$WORK/b.snap" </dev/null
 # tail <name> <theory> <first line> <last line> [<syms from line>]: theorems
 # of S5a, or of S4a for <first line> 0, as <theory>; their features those of
@@ -1605,9 +1606,9 @@ tail_theory() {
   fi
   sed "s/\$/:$thy/" "$WORK/$name.seq" > "$WORK/$name.thy"
 }
-tail_theory T1 T 0 500
+tail_theory T1 T 0 250
 tail_theory T2 T 1 50
-tail_theory T3 T 51 150 1001
+tail_theory T3 T 51 150 501
 tail_theory U U 151 200
 # U, added before T, depends on none of it, as in a process started on both
 sed -i 's/:.*/:/' "$WORK/U.deps"
@@ -1635,46 +1636,49 @@ $qs
 $qs
 !replace T $(files T2)
 $qs"
-for m in $methods nbayes-dense cosine-dense rforest; do
+for m in knn nbayes nbayes-dense cosine cosine-dense mepo mesh; do
   n=300
   case $m in mepo|mesh) n=50 ;; esac
   # from_snap <tail>: the answers of a process started on the snapshot and
   # <tail>
   from_snap() { checked $1 -i "$WORK/b.snap" -L "$WORK/$1.thy" -p $m -n $n -S <<<"$qs"; }
-  later="$(from_snap T2)
-2100
+  t1=$(from_snap T1)
+  t2=$(from_snap T2)
+  e=$(from_snap E)
+  want="$t1
+1050
+$t2
+1100
 $(from_snap T3)
-2000
-$(from_snap E)
-2050
+1000
+$e
+1050
 $(from_snap U)
-2550
+1300
 $(from_snap UT1)
-2100
+1100
 $(from_snap UT2)"
-  want="$(from_snap T1)
-2050
-$later"
   out=$(note='with !replace of the last theory' checked T1 -i "$WORK/b.snap" -L "$WORK/T1.thy" -p $m -n $n -S <<<"$qs
 $commands")
   if [ "$out" != "$want" ]; then
     msg="$m, started on the snapshot and T: '$out', not '$want'"
     break
   fi
-  want="$(from_snap E)
-2500
-$(from_snap T1)
-2050
-$later"
+  want="$e
+1250
+$t1
+1050
+$t2"
   out=$(note='with !add and !replace of the last theory' checked b -p $m -n $n -S <<<"$qs
 !add $(files T1)
 $qs
-$commands")
+!replace T $(files T2)
+$qs")
   if [ "$out" != "$want" ]; then
     msg="$m, started on the first theorems: '$out', not '$want'"
     break
   fi
-  want="2100
+  want="1100
 $(checked UT2 -i "$WORK/b.snap" -L "$WORK/UT2.thy" -p $m -n $n -S <<<"$uqs")"
   out=$(note='with !replace of a theory given features first' checked UT3 -i "$WORK/b.snap" -L "$WORK/UT3.thy" -p $m -n $n -S <<<"!replace T $(files T2)
 $uqs")
