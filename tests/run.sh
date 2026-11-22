@@ -1642,13 +1642,16 @@ for m in knn nbayes nbayes-dense cosine cosine-dense mepo mesh; do
   # from_snap <tail>: the answers of a process started on the snapshot and
   # <tail>
   from_snap() { checked $1 -i "$WORK/b.snap" -L "$WORK/$1.thy" -p $m -n $n -S <<<"$qs"; }
-  want="$(from_snap T1)
+  t1=$(from_snap T1)
+  t2=$(from_snap T2)
+  e=$(from_snap E)
+  want="$t1
 1050
-$(from_snap T2)
+$t2
 1100
 $(from_snap T3)
 1000
-$(from_snap E)
+$e
 1050
 $(from_snap U)
 1300
@@ -1661,11 +1664,11 @@ $commands")
     msg="$m, started on the snapshot and T: '$out', not '$want'"
     break
   fi
-  want="$(from_snap E)
+  want="$e
 1250
-$(from_snap T1)
+$t1
 1050
-$(from_snap T2)"
+$t2"
   out=$(note='with !add and !replace of the last theory' checked b -p $m -n $n -S <<<"$qs
 !add $(files T1)
 $qs
