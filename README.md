@@ -250,18 +250,20 @@ an added one is not read again, so it is missing, as with snapshots
 `predict` then ranks as a process started on the changed corpus would, and
 prints the number of theorems the process holds (see "Versions and views").
 When `<theory>`'s theorems are the last ones (or it has none), no other
-theorem depends on one and `-P` is not given, as when a process follows the
-theory being edited, they are cut off the end, and the rankings, scores
-included, are those of a process started on the changed corpus (from the
-same snapshot, if any); `knn`, `nbayes`, `nbayes-dense`, `cosine`,
-`cosine-dense`, `mepo`, `mash` and `mesh` then unlearn them and learn the
-new ones, as for `!add`, instead of learning the whole corpus again.
-Otherwise `!replace` removes the theorems and learns the whole corpus again,
-which ranks as a process started on the changed corpus up to rounding
-(features may be numbered otherwise, which changes the order of some sums).
-The files of a command may give dependencies and features only to the
-theorems it adds. With `-P`, the files' types and frequency-only tokens are
-read too. Commands work neither with `-x` nor with `-y`.
+theorem depends on one, no feature they gave first in `<syms>` (beyond a
+snapshot's) is another theorem's or comes before one another theorem gave
+first, and `-P` is not given, as when a process follows the theory being
+edited, they are cut off the end, and the rankings, scores included, are
+those of a process started on the changed corpus (from the same snapshot, if
+any); `knn`, `nbayes`, `nbayes-dense`, `cosine`, `cosine-dense`, `mepo`,
+`mash` and `mesh` then unlearn them and learn the new ones, as for `!add`,
+instead of learning the whole corpus again. Otherwise `!replace` removes the
+theorems and learns the whole corpus again, which ranks as a process started
+on the changed corpus up to rounding (features may be numbered otherwise,
+which changes the order of some sums). The files of a command may give
+dependencies and features only to the theorems it adds. With `-P`, the
+files' types and frequency-only tokens are read too. Commands work neither
+with `-x` nor with `-y`.
 
 ### Versions and views
 

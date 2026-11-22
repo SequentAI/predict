@@ -127,37 +127,26 @@ vector<string> command_files(const string& args, const string& line) {
 }
 
 // Adds the theorems of [files], as command_files gives them, after the
-// others, for the command [line].
-void add_theorems(Session& s, const vector<string>& files,
-  const string& line) {
+// others.
+void add_theorems(Session& s, const vector<string>& files) {
   const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
     &theoriesf = files[3];
   Corpus& c = s.corpus;
   const long old_n = c.no_th.size();
-  // the theorems before keep their dependencies and features
-  auto sizes = [&]() {
-    size_t k = 0;
-    for (long i = 0; i < old_n; ++i) k += c.deps[i].size() + c.syms[i].size();
-    return k;
-  };
-  const size_t old_sizes = sizes();
   read_order(seqf, c.th_no, c.no_th);
   const long n = c.no_th.size();
   c.deps.resize(n);
   c.syms.resize(n);
   s.statures.resize(n, 0);
   s.theories.resize(n);
-  read_deps(depsf, c.th_no, c.deps);
+  read_deps(depsf, c.th_no, c.deps, old_n);
   if (c.types) {
     c.typed.resize(n);
     c.freq_only.resize(n);
   }
   long sym_num = c.no_sym.size();
   read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym,
-    c.types, &c.typed, &c.freq_only);
-  if (sizes() != old_sizes)
-    exit_error("A dependency or feature of a theorem not added by `" + line +
-               "' is in its files!");
+    c.types, &c.typed, &c.freq_only, old_n);
   read_theories(theoriesf, c.th_no, s.theories);
 }
 
@@ -275,7 +264,7 @@ void command(Session& s, const string& line, unique_ptr<Predictor>& p) {
     const vector<string> files = command_files(line.substr(5), line);
     const long from = s.corpus.no_th.size();
     const bool kept = p->forget(from);
-    add_theorems(s, files, line);
+    add_theorems(s, files);
     relearn(s, p, kept, from);
   }
   else if (line.rfind("!replace ", 0) == 0) {
@@ -288,14 +277,15 @@ void command(Session& s, const string& line, unique_ptr<Predictor>& p) {
     const long t = s.theories.find(theory);
     // the theory's theorems are cut off the end if they are the last ones,
     // unlearned if the predictor can, else removed
-    const long from = last_theory_start(s.corpus, s.theories, t);
+    const long from = last_theory_start(s.corpus, s.theories, t,
+      s.snapshot_syms);
     const bool kept = from != -1 && p->forget(from);
     if (from != -1)
       drop_last_theory(s.corpus, s.statures, s.theories, from,
         s.snapshot_syms);
     else if (t != -1)
       remove_theory(s.corpus, s.statures, s.theories, t);
-    add_theorems(s, files, line);
+    add_theorems(s, files);
     relearn(s, p, kept, from);
   }
   else

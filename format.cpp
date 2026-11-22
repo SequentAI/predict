@@ -73,8 +73,17 @@ string read_id(const string &line, size_t &pos, const string &stops) {
   return id;
 }
 
-/* Given a file name and trans, fills deps in an allocated vector of empty vectors */
-void read_deps(const string &fname, SLMap &th_no, LVecVec &deps) {
+// Exits: a line of [fname] is about theorem [th], which its command doesn't
+// add.
+void not_added(const string &fname, const string &th) {
+  exit_error("A line of `" + fname + "' is about theorem `" + th +
+             "', which the command does not add!");
+}
+
+/* Given a file name and trans, fills deps in an allocated vector of empty vectors.
+   A line of a theorem before [first] is an error. */
+void read_deps(const string &fname, SLMap &th_no, LVecVec &deps,
+               long first = 0) {
   ifstream ic(fname);
   string line;
   while (getline (ic, line)) {
@@ -87,6 +96,7 @@ void read_deps(const string &fname, SLMap &th_no, LVecVec &deps) {
       cerr << "dep item missing in seq: " << thn << endl;
     else {
       long th = th_no[thn];
+      if (th < first) not_added(fname, thn);
       while (pos < line.size()) {
         if (line[pos] == ' ') {
           ++pos;
@@ -405,12 +415,13 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
 // a feature repeated with an equal type counts once, its occurrence counts
 // added up; and its frequency-only tokens into [freq_only] alike,
 // registering a new feature with no theorems. Without [types],
-// frequency-only tokens are ignored.
+// frequency-only tokens are ignored. A line of a theorem before [first] is
+// an error.
 void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
                long &sym_num, const SLMap &th_no,
                HLMap &sym_no, SVec& no_sym,
                TypeTable *types = nullptr, TypedSyms *typed = nullptr,
-               TypedSyms *freq_only = nullptr) {
+               TypedSyms *freq_only = nullptr, long first = 0) {
   ifstream ic(fname);
   string line;
   while (getline(ic, line)) {
@@ -423,6 +434,7 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
     if (th_got == th_no.end())
       exit_error("Theorem `" + th_str + "' not found!");
     long th = th_got->second;
+    if (th < first) not_added(fname, th_str);
 
     // the theorem's features from its earlier lines count as seen
     unordered_set<long> seen(syms[th].begin(), syms[th].end());

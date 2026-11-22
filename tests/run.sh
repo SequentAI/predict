@@ -1242,7 +1242,7 @@ if [ -z "$msg" ]; then
   { cat "$WORK/down.syms"; printf '%s:"zz"\n' "$(head -1 "$WORK/up.seq")"; } > "$WORK/old.syms"
   out=$(run up -p cosine -L "$WORK/up.thy" <<<"!add $WORK/old.syms $WORK/down.deps $WORK/down.seq $WORK/down.thy")
   status=$?
-  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q "not added by" "$WORK/stderr"; then
+  if [ $status -eq 0 ] || [ -n "$out" ] || ! grep -q "which the command does not add" "$WORK/stderr"; then
     msg="!add giving a feature to an earlier theorem: exit status $status, output '$out'"
   fi
 fi
@@ -1581,7 +1581,8 @@ if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "fea
 # T, ranks after each `!replace` of its last theory (to fewer theorems, to
 # theorems with other features, to none) and `!add` as a
 # process started on the snapshot and the theorems it then holds after it,
-# scores included, for every method. T depends on the theorems before and
+# scores included, for every method; so does one whose <syms> gives T's
+# features before those of a theory before it. T depends on the theorems before and
 # on later ones; MePo predicts 50 on the checked build, as in 47.
 number=49
 LIMIT=600
@@ -1616,8 +1617,12 @@ sed -i '1,5s/$/, "n5", "n4", "n3", "n2", "n1", "n0"/' "$WORK/T2.syms"
 for f in seq syms deps thy; do : > "$WORK/E.$f"; done
 fresh UT1 U T1
 fresh UT2 U T2
+fresh UT3 U T3
+{ cat "$WORK/T3.syms"; cat "$WORK/U.syms"; } > "$WORK/UT3.syms"
 files() { echo "$WORK/$1.syms $WORK/$1.deps $WORK/$1.seq $WORK/$1.thy"; }
 qs=$(head -3 "$WORK/synth.wqueries"; echo '"n0", "n2", "n4", "f1"')
+# and with the features of a theorem of U and of one of T2
+uqs=$(echo "$qs"; head -1 "$WORK/U.syms" | cut -d: -f2-; head -1 "$WORK/T2.syms" | cut -d: -f2-)
 commands="!replace T $(files T2)
 $qs
 !replace T $(files T3)
@@ -1667,6 +1672,14 @@ $qs
 $commands")
   if [ "$out" != "$want" ]; then
     msg="$m, started on the first theorems: '$out', not '$want'"
+    break
+  fi
+  want="2100
+$(checked UT2 -i "$WORK/b.snap" -L "$WORK/UT2.thy" -p $m -n $n -S <<<"$uqs")"
+  out=$(note='with !replace of a theory given features first' checked UT3 -i "$WORK/b.snap" -L "$WORK/UT3.thy" -p $m -n $n -S <<<"!replace T $(files T2)
+$uqs")
+  if [ "$out" != "$want" ]; then
+    msg="$m, its <syms> giving T's features first: '$out', not '$want'"
     break
   fi
 done

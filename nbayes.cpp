@@ -58,10 +58,11 @@ class NaiveBayes : public Predictor {
       for (const auto f : syms[u]) delta.push_back(make_pair(f, w));
     }
     // adds [delta], the changes of some theorems' counts, to them, merging
-    // each theorem's once
+    // each theorem's once; with [dense], computes the sfreqs of the learned
+    // ones again instead
     void apply(map<sample_t, Counts>& delta);
-    // counts[i] and tfreq[i] of each theorem i, from the users of the
-    // theorems [0, to) learned
+    // tfreq[i] of each theorem i, and counts[i] unless [dense], from the
+    // users of the theorems [0, to) learned
     void count_all(sample_t to);
     // Theorem i's sfreq: its counts in the order an unordered_map adding up
     // its own features and those of its users, in learn order, iterates
@@ -74,9 +75,9 @@ class NaiveBayes : public Predictor {
     // tfreq[t] = number of theorems having t as dependency, 1000 for t
     // itself
     vector<long> tfreq;
-    // counts[t] = the (f, number of theorems having f and having t as
-    // dependency, 1000 for t itself) in increasing order of f, for each f
-    // with a nonzero number
+    // unless [dense], counts[t] = the (f, number of theorems having f and
+    // having t as dependency, 1000 for t itself) in increasing order of f,
+    // for each f with a nonzero number
     vector<Counts> counts;
     // users[t] = the theorems learning t as a dependency, in learn order
     // (once for each time)
@@ -125,10 +126,11 @@ void add_counts(Counts& c, Counts delta) {
 }
 
 void NaiveBayes::apply(map<sample_t, Counts>& delta) {
-  for (auto& td : delta) {
-    add_counts(counts[td.first], move(td.second));
-    if (dense && td.first < learned) sfreqs[td.first] = sfreq(td.first);
-  }
+  for (auto& td : delta)
+    if (!dense)
+      add_counts(counts[td.first], move(td.second));
+    else if (td.first < learned)
+      sfreqs[td.first] = sfreq(td.first);
 }
 
 size_t NaiveBayes::learned_deps(sample_t u) const {
@@ -151,6 +153,7 @@ void NaiveBayes::count_all(sample_t to) {
   };
   for (sample_t i = 0; i < n; ++i) {
     tfreq[i] = (i < to ? 1000 : 0) + users[i].size();
+    if (dense) continue;
     if (i < to) add(i, 1000);
     for (const auto u : users[i]) add(u, 1);
     sort(touched.begin(), touched.end());
