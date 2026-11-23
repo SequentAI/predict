@@ -1694,11 +1694,11 @@ LIMIT=5
 # process answers it without the key, scores included, for M = knn, mash,
 # mepo and mesh: alone (no scope, so T's private theorems may be predicted),
 # with other keys, and on a view; with -T 51n/50 too, which changes only
-# mesh. The processes start on the snapshot of 49 and T1, and the view
-# holds S2 and S3; a third of the theorems of T, S2 and S3 are private. A
-# -p M process takes method=M; any other method, and one a -p mesh process
-# has no part for, is an error. MePo predicts 50 on the checked build, as in
-# 47.
+# mesh; and after a !replace of T. The processes start on the snapshot of
+# 49 and T1, and the view holds S2 and S3; a third of the theorems of T, S2
+# and S3 are private. A -p M process takes method=M; any other method, and
+# one a -p mesh process has no part for, is an error. MePo predicts 50 on the
+# checked build, as in 47.
 number=50
 LIMIT=600
 msg=
@@ -1716,9 +1716,13 @@ vq=$(head -3 "$WORK/synth.wqueries" | sed 's/^/[view=w]/'; head -2 "$WORK/synth.
 # with_method <M>: the queries $mq and $vq, each with method=<M> in its scope
 with_method() { sed "s/^\[/[method=$1 /; t; s/^/[method=$1]/" <<<"$mq
 $vq"; }
-# 3 commands, then 10 answers for each method
+# 3 commands, 10 answers for each method, a !replace of T, then 10 answers
+# for each method again
+replace="!replace T $(files T2)"
 for T in "" "-T 51n/50"; do
   out=$(note="answering every method $T" checked T1 -i "$WORK/b.snap" -L "$WORK/Tp.thy" -p mesh -n 50 -S $T <<<"$setup
+$(for m in knn mash mepo mesh; do with_method $m; done)
+$replace
 $(for m in knn mash mepo mesh; do with_method $m; done)")
   b=4
   for m in knn mash mepo mesh; do
@@ -1726,8 +1730,11 @@ $(for m in knn mash mepo mesh; do with_method $m; done)")
     [ $m = mesh ] && t=$T
     want=$(checked T1 -i "$WORK/b.snap" -L "$WORK/Tp.thy" -p $m -n 50 -S $t <<<"$setup
 $mq
+$vq
+$replace
+$mq
 $vq" | tail -n +4)
-    got=$(sed -n "$b,$((b + 9))p" <<<"$out")
+    got=$(sed -n "$b,$((b + 9))p;44p;$((b + 41)),$((b + 50))p" <<<"$out")
     b=$((b + 10))
     if [ -z "$want" ] || [ "$got" != "$want" ]; then
       msg="method=$m on -p mesh $T: '$got', not '$want'"
