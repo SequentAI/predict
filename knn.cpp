@@ -11,14 +11,14 @@ class kNN : public Predictor {
     void learn(long from, long to);
     bool forget(long from);
 
-    // The ranking MaSh fuses (see credit_neighbours)
-    LDPairVec predict_credited(const LDPairVec& query, long maxth,
-      long no_adv) const;
-
   protected:
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
 
   private:
+    friend class MaSh;
+    // The ranking MaSh fuses (see credit_neighbours)
+    LDPairVec predict_credited(const LDPairVec& query, long maxth,
+      long no_adv) const;
     // (i, similarity of theorem i to the query) for each i < maxth
     LDPairVec similarities(const LVec& csyms, long maxth) const;
 
@@ -88,8 +88,10 @@ LDPairVec place_deps(LDPairVec neighbours, long n, long no_adv,
 // src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML at the commit mesh.cpp
 // cites): each neighbour credits its dependencies with part of its
 // similarity, and the theorems are sorted by credit. So there are two
-// orders: -p knn places dependencies as HOL4's k-NN premise filter does,
-// while mash fuses the k-NN that Isabelle's MaSh fuses.
+// orders, as in HOL4, where thmknn_wdep places dependencies for the k-NN
+// premise filter and the bare thmknn ranks the neighbours alone: -p knn is
+// thmknn_wdep's order, and mash fuses this credited ranking, as Isabelle's
+// MaSh does.
 // [ans] holds (i, 0) for each theorem i; the other arguments are
 // place_deps'.
 template <class DepsOf, class Visible>
@@ -200,11 +202,12 @@ class kNNView : public ViewPredictor {
 
     LDPairVec predict_weighted(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
+
+  private:
+    friend class MaShView;
     // as kNN::predict_credited
     LDPairVec predict_credited(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
-
-  private:
     // as kNN::similarities, for the theorems in scope
     LDPairVec similarities(const LDPairVec& query,
       const vector<char>* in_scope) const;

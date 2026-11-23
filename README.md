@@ -432,15 +432,17 @@ features they share with it, of the feature's IDF to the sixth), and places
 each neighbour's dependencies right after it: a theorem comes at its first
 place, as HOL4's `thmknn_wdep` places them
 (`src/AI/machine_learning/mlNearestNeighbor.sml`). With `-S`, a theorem's
-score is the similarity of the neighbour that placed it.
+score is the similarity of the neighbour that placed it, so a neighbour's
+dependencies share its score and come in the order of its dependencies.
 
 `mash` instead fuses the k-NN ranking of Isabelle's MaSh
 (`k_nearest_neighbors` in `sledgehammer_mash.ML`, cited below), which is
 upstream's `knn`: each neighbour credits its dependencies with part of its
 similarity, and the theorems are sorted by their credit.
 
-`-c 0` leaves dependencies out, in `knn` (which then ranks the neighbours
-alone) and inside `mash` and `mesh`; `-c 1`, the default, keeps them.
+`-c 0` stops neighbours from placing or crediting their dependencies, in
+`knn` (which then ranks the neighbours alone, each theorem by its own
+similarity) and inside `mash` and `mesh`; `-c 1`, the default, keeps that.
 
 `mash` and `mesh` fuse rankings as Isabelle's Sledgehammer does
 (`src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML`, lines 164–200 at commit
@@ -481,7 +483,8 @@ scores equal.
 - Dependencies later in `<seq>` than their dependent are kept.
 - Repeated features count once in `<syms>` and in queries.
 - Query features may carry weights.
-- Equal scores are ranked in `<seq>` order.
+- Equal scores are ranked in `<seq>` order, except for the dependencies
+  `knn` places after a neighbour.
 - `nbayes` reads only the statistics of the query's features, ranking as the
   scan over every theorem does (kept as `nbayes-dense`), and learns from at
   most 20 dependencies per theorem by default (`-d`).

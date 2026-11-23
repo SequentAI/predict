@@ -1776,4 +1776,37 @@ fi
 if [ -n "$msg" ]; then fail "method= on a -p mesh process" "$msg"; else ok "method= on a -p mesh process"; fi
 LIMIT=5
 
+# 51. knn places each neighbour's dependencies right after it, each theorem
+# once, skipping those out of scope without spending a place on them
+number=51
+# For "x", "y", A.a is the best neighbour and A.b the next; the others share
+# nothing with the query. A.a depends on B.e and on A.c, twice.
+corpus place $'A.a\nA.b\nA.c\nA.d\nB.e\n' \
+  $'A.a:"x", "y"\nA.b:"x"\nA.c:"w"\nA.d:"v"\nB.e:"u"\n' $'A.a:B.e A.c A.c\n'
+sed 's/^\([A-Za-z]*\)\..*/&:\1/' "$WORK/place.seq" > "$WORK/place.thy"
+msg=
+for c in 'knn:A.a B.e A.c A.b ' \
+         'knn [exclude=B]:A.a A.c A.b A.d ' \
+         'mesh [exclude=B method=knn]:A.a A.c A.b A.d ' \
+         'knn -c 0:A.a A.b A.c A.d '; do
+  want=${c#*:} c=${c%%:*}
+  m=${c%% *} rest=${c#"$m"}
+  scope= opts=
+  case $rest in
+    ' ['*) scope=${rest# } ;;
+    *) opts=$rest ;;
+  esac
+  out=$(checked place -p $m -n 4 -L "$WORK/place.thy" $opts <<<"$scope\"x\", \"y\"")
+  if [ "$out" != "$want" ]; then
+    msg="-p $m$opts '$scope': '$out', not '$want'"
+    break
+  fi
+done
+if [ -z "$msg" ]; then
+  # the dependencies take the score of the neighbour that placed them
+  out=$(checked place -p knn -n 3 -S <<<'"x", "y"' | scores_of | awk '{print $2}' | sort -u | wc -l)
+  [ "$out" -eq 1 ] || msg="-S gives the first 3 theorems $out scores, not 1"
+fi
+if [ -n "$msg" ]; then fail "knn dependency placement" "$msg"; else ok "knn dependency placement"; fi
+
 [ $failures -eq 0 ]
