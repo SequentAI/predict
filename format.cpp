@@ -168,6 +168,7 @@ struct Token {
   double weight = 1.0;
   long count = 1;
   bool freq_only = false;
+  // whether it has a type, or an occurrence count `*n`
   bool typed = false;
   char kind = 'c';
   long order = 1;
@@ -263,6 +264,7 @@ vector<Token> parse_string_list(string::iterator begin,
       if (weighted)
         exit_error("Occurrence counts are not allowed in queries!");
       ++begin;
+      t.typed = true;
       t.count = read_count(begin, end, "occurrence count");
       // a constant's or variable's weight divides by its frequency's log
       if (t.count == 0 && t.kind != 'a' && t.kind != 't')
@@ -314,6 +316,10 @@ vector<Token> parse_string_list(string::iterator begin,
 // them. All type variables are one pattern.
 class TypeTable {
   public:
+    // a pattern (constructor number, or -1 for a variable; argument
+    // patterns), or an (order, patterns) pair
+    typedef pair<long, LVec> Key;
+
     // the number of a pattern, numbering it if it is new
     long pattern(const PatternText &p) {
       LVec args;
@@ -344,9 +350,38 @@ class TypeTable {
       return match_patterns(ptypes[p].second, ptypes[q].second);
     }
 
-  private:
-    typedef pair<long, LVec> Key;
+    // The tables, for a snapshot: the constructor names, patterns and
+    // (order, patterns) pairs, each by number.
+    SVec ctors() const {
+      SVec out(ctor_no.size());
+      for (const auto& c : ctor_no) out[c.second] = c.first;
+      return out;
+    }
+    const vector<Key>& patterns() const { return nodes; }
+    const vector<Key>& ptype_keys() const { return ptypes; }
 
+    // Fills an empty table with the tables ctors, patterns and ptype_keys
+    // gave; returns false if they are not such tables: a number out of range
+    // (a pattern's arguments come before it), or an entry twice.
+    bool restore(const SVec& cs, const vector<Key>& ps,
+      const vector<Key>& pts) {
+      for (size_t i = 0; i < cs.size(); ++i)
+        if (!ctor_no.emplace(cs[i], i).second) return false;
+      for (size_t i = 0; i < ps.size(); ++i) {
+        if (ps[i].first < -1 || ps[i].first >= (long)cs.size()) return false;
+        for (const auto a : ps[i].second)
+          if (a < 0 || a >= (long)i) return false;
+        if (number(nodes, node_no, ps[i]) != (long)i) return false;
+      }
+      for (size_t i = 0; i < pts.size(); ++i) {
+        for (const auto p : pts[i].second)
+          if (p < 0 || p >= (long)ps.size()) return false;
+        if (number(ptypes, ptype_no, pts[i]) != (long)i) return false;
+      }
+      return true;
+    }
+
+  private:
     static long number(vector<Key> &keys, map<Key, long> &numbers,
       const Key &k) {
       auto got = numbers.find(k);
@@ -408,6 +443,15 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
   else same->count += ts.count;
 }
 
+// The typed symbols of a -P corpus whose untyped features are kept apart
+// (-p knn, mash or mesh): numbered on their own, as a corpus of the typed
+// tokens alone numbers them, with the theorems that have each.
+struct TypedTable {
+  HLMap sym_no;
+  SVec no_sym;
+  LVecVec syms, sym_ths;
+};
+
 // parses strings of the format:
 // thmid:"feature1", "feature2", ..., "featuren"
 // A feature repeated in a theorem's lines, on one line or several, counts
@@ -415,13 +459,16 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
 // a feature repeated with an equal type counts once, its occurrence counts
 // added up; and its frequency-only tokens into [freq_only] alike,
 // registering a new feature with no theorems. Without [types],
-// frequency-only tokens are ignored. A line of a theorem before [first] is
-// an error.
+// frequency-only tokens are ignored. With [split] (and [types]), a token
+// with a type or a count is only a typed symbol, its feature numbered in
+// [split], and the others are only features. A line of a theorem before
+// [first] is an error.
 void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
                long &sym_num, const SLMap &th_no,
                HLMap &sym_no, SVec& no_sym,
                TypeTable *types = nullptr, TypedSyms *typed = nullptr,
-               TypedSyms *freq_only = nullptr, long first = 0) {
+               TypedSyms *freq_only = nullptr, long first = 0,
+               TypedTable *split = nullptr) {
   ifstream ic(fname);
   string line;
   while (getline(ic, line)) {
@@ -438,12 +485,36 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
 
     // the theorem's features from its earlier lines count as seen
     unordered_set<long> seen(syms[th].begin(), syms[th].end());
+    unordered_set<long> seen_typed;
+    if (split)
+      seen_typed.insert(split->syms[th].begin(), split->syms[th].end());
     for (const auto& t : parse_string_list(line.begin() + pos + 1, line.end(), false)) {
       const string& f = t.feature;
       const uint64_t fh = feature_hash(f);
+      if (split && (t.typed || t.freq_only)) {
+        auto got = split->sym_no.find(fh);
+        long s;
+        if (got == split->sym_no.end()) {
+          s = split->no_sym.size();
+          split->sym_no[fh] = s;
+          split->no_sym.push_back(f);
+          split->sym_ths.push_back(LVec());
+        }
+        else s = got->second;
+        if (t.freq_only) {
+          add_typed((*freq_only)[th], typed_sym(s, t, *types));
+          continue;
+        }
+        if (seen_typed.insert(s).second) {
+          split->syms[th].push_back(s);
+          split->sym_ths[s].push_back(th);
+        }
+        add_typed((*typed)[th], typed_sym(s, t, *types));
+        continue;
+      }
       auto ftr_got = sym_no.find(fh);
       if (t.freq_only) {
-        if (!types) continue;
+        if (!types || split) continue;
         long s;
         if (ftr_got == sym_no.end()) {
           s = sym_num;
@@ -473,7 +544,7 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
           sym_ths[s].push_back(th);
         }
       }
-      if (types) add_typed((*typed)[th], typed_sym(s, t, *types));
+      if (types && !split) add_typed((*typed)[th], typed_sym(s, t, *types));
     }
   }
 }
@@ -481,11 +552,10 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
 // Parses a query line into (feature, weight) pairs, dropping unknown
 // features. A feature repeated in the query counts once, with its largest
 // weight.
-LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
-  const HLMap& ftr_no) {
+LDPairVec feature_list(const vector<Token>& tokens, const HLMap& ftr_no) {
   LDPairVec result;
   unordered_map<long, size_t> index;
-  for (const auto& t : parse_string_list(begin, end, true)) {
+  for (const auto& t : tokens) {
     auto got = ftr_no.find(feature_hash(t.feature));
     if (got == ftr_no.end())
       continue;
@@ -501,12 +571,17 @@ LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
   return result;
 }
 
+LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
+  const HLMap& ftr_no) {
+  return feature_list(parse_string_list(begin, end, true), ftr_no);
+}
+
 // Parses a query line into typed symbols, dropping unknown features. A
 // feature repeated with an equal type counts once, with its largest weight.
-vector<TypedSym> parse_typed_query(string::iterator begin,
-  string::iterator end, const HLMap& ftr_no, TypeTable& types) {
+vector<TypedSym> typed_query(const vector<Token>& tokens, const HLMap& ftr_no,
+  TypeTable& types) {
   vector<TypedSym> result;
-  for (const auto& t : parse_string_list(begin, end, true)) {
+  for (const auto& t : tokens) {
     auto got = ftr_no.find(feature_hash(t.feature));
     if (got == ftr_no.end())
       continue;
@@ -517,6 +592,24 @@ vector<TypedSym> parse_typed_query(string::iterator begin,
     else same->weight = max(same->weight, ts.weight);
   }
   return result;
+}
+
+vector<TypedSym> parse_typed_query(string::iterator begin,
+  string::iterator end, const HLMap& ftr_no, TypeTable& types) {
+  return typed_query(parse_string_list(begin, end, true), ftr_no, types);
+}
+
+// Parses a query line of a corpus whose typed symbols are numbered in
+// [split]: its tokens with a type as parse_typed_query into [typed], and the
+// others as parse_feature_list into [untyped].
+void parse_split_query(string::iterator begin, string::iterator end,
+  const HLMap& ftr_no, const TypedTable& split, TypeTable& types,
+  LDPairVec& untyped, vector<TypedSym>& typed) {
+  vector<Token> plain, with_type;
+  for (auto& t : parse_string_list(begin, end, true))
+    (t.typed ? with_type : plain).push_back(move(t));
+  untyped = feature_list(plain, ftr_no);
+  typed = typed_query(with_type, split.sym_no, types);
 }
 
 // Fact statures, as bit flags: a fact may be a simp rule, local to the goal's

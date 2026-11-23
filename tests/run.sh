@@ -867,7 +867,8 @@ if [ -z "$msg" ]; then
 fi
 if [ -n "$msg" ]; then fail "typed and untyped files" "$msg"; else ok "typed and untyped files"; fi
 
-# 31. malformed types are errors, -P needs -p mepo and queries
+# 31. malformed types are errors, -P needs -p mepo, knn, mash or mesh, and
+# queries
 number=31
 msg=
 for bad in '"k$f"<x 1>' '"k$f"<c>' '"k$f"<c 1 k>' '"k$f"<c 1 "k"(_>' '"k$f"*2' \
@@ -888,8 +889,8 @@ if [ -z "$msg" ] && ! run abs0 -p mepo -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
   msg="corpus abstraction count 0 rejected"
 fi
 printf 'a\n' > "$WORK/t.eval"
-if [ -z "$msg" ] && run types -p knn -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
-  msg="-P accepted with knn"
+if [ -z "$msg" ] && run types -p nbayes -P -n 1 <<<'"k$f"' >/dev/null 2>&1; then
+  msg="-P accepted with nbayes"
 elif [ -z "$msg" ] && run types -p mepo -P -n 1 -e "$WORK/t.eval" >/dev/null 2>&1; then
   msg="-P accepted with -e"
 fi
@@ -1813,5 +1814,162 @@ if [ -z "$msg" ]; then
     msg="-S gave '$out', not '$want'"
 fi
 if [ -n "$msg" ]; then fail "knn dependency placement" "$msg"; else ok "knn dependency placement"; fi
+
+# With -P, -p knn, mash and mesh keep the typed symbols (a token with a type
+# or a count) apart from the features: c<x> holds <x>'s untyped lines and
+# t<x>'s typed ones, so each theorem has both.
+for x in dag up down kept new; do
+  for f in seq deps thy; do cp "$WORK/$x.$f" "$WORK/c$x.$f"; done
+  cat "$WORK/$x.syms" "$WORK/t$x.syms" > "$WORK/c$x.syms"
+done
+# untyped and typed parts of queries, each pair a query with both
+untyped_parts=('"p", "q"' '"u", "v"' '"t"' '"r"@0.5, "p"' '"w"')
+typed_parts=('"p"<c 1 "k$set">, "q"<c 1 _>' '"u"<v 0>, "p"<c 1 "k$num">@0.5'
+  '"t"<c 1>' '"r"<c 2 "k$num" "k$bool">' '"q"<c 1 "k$num">')
+
+# 52. with -P, knn and mash rank the features alone, as without types, and
+# mesh's parts rank as those processes do: MePo the typed symbols alone, as
+# -p mepo -P does on them
+number=52
+msg=
+for i in "${!untyped_parts[@]}"; do
+  u=${untyped_parts[$i]} t=${typed_parts[$i]}
+  for c in "mesh [method=mepo]:tdag -p mepo -P:$t" \
+           "mesh [method=knn]:dag -p knn:$u" \
+           "mesh [method=mash]:dag -p mash -P:$u" \
+           "knn:dag -p knn:$u" \
+           "mash:dag -p mash -P:$u"; do
+    ref=${c#*:} m=${c%%:*}
+    q=${ref#*:} ref=${ref%%:*}
+    scope=
+    case $m in *' ['*) scope="[${m#*[}" m=${m%% *} ;; esac
+    a=$(checked cdag -p $m -P -L "$WORK/cdag.thy" -F "$WORK/tdag.statures" -n 12 -S <<<"$scope$u, $t")
+    b=$(checked ${ref%% *} ${ref#* } -L "$WORK/dag.thy" -F "$WORK/tdag.statures" -n 12 -S <<<"$q")
+    [ -n "$a" ] && [ "$a" = "$b" ] || { msg="-p $m -P '$scope$u, $t' gave '$a', $ref gives '$b'"; break 2; }
+  done
+done
+if [ -n "$msg" ]; then fail "-P keeps typed symbols apart" "$msg"; else ok "-P keeps typed symbols apart"; fi
+
+# 53. with -P, mash fuses naive Bayes and knn's neighbours alone (-c 0), each
+# cut to 2n + 25 and fused at that depth, then follows each theorem at once by
+# its dependencies, each theorem once; mesh fuses MePo and that mash, each cut
+# to n, equal scores in the order MePo, then mash, first rank them
+number=53
+# fused <n> <deps> <legs...>: the ids mesh_facts ranks first from the rankings
+# in the files <legs> (one query per line), each cut to its first m, then each
+# id followed by its dependencies (unless <deps> is -), cut to n
+fused() {
+  python3 - "$@" <<'PY'
+import math, sys
+n, depsf, legs = int(sys.argv[1]), sys.argv[2], sys.argv[3:]
+deps = {}
+if depsf != "-":
+    for line in open(depsf):
+        th, _, ds = line.rstrip("\n").partition(":")
+        deps[th] = ds.split()
+rankings = [open(f).read().splitlines() for f in legs]
+for lines in zip(*rankings):
+    score, first = {}, {}
+    for line in lines:
+        ids = line.split()
+        mean = sum(0.62 ** math.log2(r + 1) for r in range(len(ids))) / len(ids)
+        for r, i in enumerate(ids):
+            first.setdefault(i, len(first))
+            score[i] = score.get(i, 0) + 0.5 * 0.62 ** math.log2(r + 1) / mean
+    out = []
+    for i in sorted(score, key=lambda i: (-score[i], first[i])):
+        for j in [i] + deps.get(i, []):
+            if j not in out:
+                out.append(j)
+    print(" ".join(out[:n]) + " ")
+PY
+}
+msg=
+LIMIT=600
+head -n 10 "$WORK/synth.queries" > "$WORK/synth10.queries"
+for n in 10 3; do
+  m=$((2 * n + 25))
+  checked synth -p nbayes -n $m < "$WORK/synth10.queries" > "$WORK/leg1"
+  checked synth -p knn -c 0 -n $m < "$WORK/synth10.queries" > "$WORK/leg2"
+  for c in 1 0; do
+    d=$WORK/synth.deps
+    [ $c -eq 1 ] || d=-
+    want=$(fused $n "$d" "$WORK/leg1" "$WORK/leg2")
+    out=$(checked synth -p mash -P -c $c -n $n < "$WORK/synth10.queries")
+    [ -n "$out" ] && [ "$out" = "$want" ] || { msg="mash -P -c $c -n $n gave '$out', not '$want'"; break 2; }
+  done
+done
+LIMIT=5
+for n in 4 9; do
+  [ -n "$msg" ] && break
+  : > "$WORK/leg1"; : > "$WORK/leg2"; : > "$WORK/cq"
+  for i in "${!untyped_parts[@]}"; do
+    u=${untyped_parts[$i]} t=${typed_parts[$i]}
+    checked tdag -p mepo -P -F "$WORK/tdag.statures" -n $n <<<"$t" >> "$WORK/leg1"
+    checked dag -p mash -P -n $n <<<"$u" >> "$WORK/leg2"
+    printf '%s, %s\n' "$u" "$t" >> "$WORK/cq"
+  done
+  want=$(fused $n - "$WORK/leg1" "$WORK/leg2")
+  out=$(checked cdag -p mesh -P -F "$WORK/tdag.statures" -n $n < "$WORK/cq")
+  [ -n "$out" ] && [ "$out" = "$want" ] || msg="mesh -P -n $n gave '$out', not '$want'"
+done
+# MePo ranks a and c first, mash e and f, so each fact of one ties with the
+# other's at the same rank; MePo's comes first, though later in <seq>
+corpus legs $'e\nf\ng\na\nb\nc\n' \
+  $'e:"x", "y"\nf:"x"\ng:"z"\na:"k$p"<c 1 _>, "k$q"<c 1 _>\nb:"k$r"<c 1 _>\nc:"k$p"<c 1 _>\n' ''
+if [ -z "$msg" ]; then
+  want="$(checked legs -p mepo -P -n 2 <<<'"k$p"<c 1 _>, "k$q"<c 1 _>' | cut -d' ' -f1) "
+  want+="$(checked legs -p mash -P -n 2 <<<'"x", "y"' | cut -d' ' -f1) "
+  out=$(checked legs -p mesh -P -n 2 <<<'"x", "y", "k$p"<c 1 _>, "k$q"<c 1 _>')
+  [ "$want" = "a e " ] && [ "$out" = "$want" ] || msg="the tie: mesh -P gave '$out', not '$want'"
+fi
+if [ -n "$msg" ]; then fail "-P mash and mesh fusions" "$msg"; else ok "-P mash and mesh fusions"; fi
+
+# 54. with -P, a snapshot holds the typed symbols too: it ranks as the text
+# corpus it was written from, also with theorems added after it; one written
+# with -P is refused without it, and the reverse, with exit status 3
+number=54
+msg=
+checked cdag -p mesh -P -o "$WORK/cdag.snap"
+checked cup -p mesh -P -o "$WORK/cup.snap"
+checked dag -o "$WORK/dag.snap"
+for m in mesh mash knn; do
+  [ -n "$msg" ] && break
+  for i in "${!untyped_parts[@]}"; do
+    q="${untyped_parts[$i]}, ${typed_parts[$i]}"
+    a=$(checked cdag -p $m -P -F "$WORK/tdag.statures" -n 12 -S <<<"$q")
+    b=$(checked none -i "$WORK/cdag.snap" -p $m -P -F "$WORK/tdag.statures" -n 12 -S <<<"$q")
+    c=$(checked cdown -i "$WORK/cup.snap" -p $m -P -F "$WORK/tdag.statures" -n 12 -S <<<"$q")
+    [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] || { msg="$m on '$q': text '$a', snapshot '$b', snapshot and text '$c'"; break; }
+  done
+done
+for c in "cdag.snap:-p mesh:written with -P" "dag.snap:-p mesh -P:written without -P"; do
+  [ -n "$msg" ] && break
+  snap=${c%%:*} why=${c##*:} opts=${c#*:} opts=${opts%:*}
+  out=$(run none -i "$WORK/$snap" $opts -n 1 <<<'"p"')
+  status=$?
+  [ $status -eq 3 ] && grep -q "$why" "$WORK/stderr" || msg="$snap with $opts: exit status $status, stderr '$(head -1 "$WORK/stderr")'"
+done
+if [ -n "$msg" ]; then fail "-P snapshots" "$msg"; else ok "-P snapshots"; fi
+
+# 55. with -P, knn, mash and mesh change their corpus in place with !add and
+# !replace as without types; !version is refused
+number=55
+msg=
+cqueries=
+for i in "${!untyped_parts[@]}"; do
+  cqueries+="${cqueries:+$'\n'}${untyped_parts[$i]}, ${typed_parts[$i]}"
+done
+for m in mesh mash knn; do
+  [ -n "$msg" ] && break
+  same_as_fresh c "$cqueries" -p $m -P -F "$WORK/tdag.statures"
+done
+if [ -z "$msg" ]; then
+  out=$(run cdag -p mesh -P -n 1 <<<"!version Script v1 $WORK/cnew.syms $WORK/cnew.deps $WORK/cnew.seq $WORK/cnew.thy")
+  status=$?
+  [ $status -ne 0 ] && grep -q "Versions work with -P only for -p mepo" "$WORK/stderr" ||
+    msg="!version: exit status $status, stderr '$(head -1 "$WORK/stderr")'"
+fi
+if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and !replace"; fi
 
 [ $failures -eq 0 ]

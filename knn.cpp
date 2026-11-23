@@ -19,6 +19,9 @@ class kNN : public Predictor {
     // The ranking MaSh fuses (see credit_neighbours)
     LDPairVec predict_credited(const LDPairVec& query, long maxth,
       long no_adv) const;
+    // The neighbours alone, by similarity: the ranking MaSh fuses with -P
+    LDPairVec predict_neighbours(const LDPairVec& query, long maxth,
+      long no_adv) const;
     // (i, similarity of theorem i to the query) for each i < maxth
     LDPairVec similarities(const LVec& csyms, long maxth) const;
 
@@ -174,6 +177,17 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
   LDPairVec neighbours = similarities(csyms, maxth);
   keep_visible(neighbours, maxth);
   return place_deps(move(neighbours), maxth, no_adv, credit_deps,
+    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return visible(i, maxth); });
+}
+
+LDPairVec kNN::predict_neighbours(const LDPairVec& query, long maxth,
+  long no_adv) const {
+  LVec csyms;
+  for (const auto& q : query) csyms.push_back(q.first);
+  LDPairVec neighbours = similarities(csyms, maxth);
+  keep_visible(neighbours, maxth);
+  return place_deps(move(neighbours), maxth, no_adv, false,
     [&](long i) -> const LVec& { return deps[i]; },
     [&](long i) { return visible(i, maxth); });
 }

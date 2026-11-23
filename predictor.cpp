@@ -29,6 +29,13 @@ class Predictor {
     // use weights treat every weight as 1.0.
     virtual LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
+    // Predicts for a query of a corpus whose typed symbols are kept apart
+    // (-P with -p knn, mash or mesh): its untyped features [query] and typed
+    // symbols [typed]. Predictors without typed symbols rank [query].
+    virtual LDPairVec predict_split(const LDPairVec& query,
+      const vector<TypedSym>& typed, long maxth, long no_adv) const {
+      return predict_weighted(query, maxth, no_adv);
+    }
 
     void set_tables(const SVec& no_th, const SVec& no_sym, const SLMap& th_no,
       const HLMap& sym_no);
