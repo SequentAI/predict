@@ -75,6 +75,8 @@ class MaSh : public Predictor {
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
     void set_scope(const vector<char>* scope);
+    // the knn it fuses, which ranks as a -p knn process
+    const Predictor& knn_part() const { return knn; }
 
   private:
     kNN knn;
@@ -133,6 +135,7 @@ class MaShView : public ViewPredictor {
 
     LDPairVec predict_weighted(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
+    const ViewPredictor& knn_part() const { return knn; }
 
   private:
     const View& view;
@@ -181,6 +184,9 @@ class MeSh : public Predictor {
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
     void set_scope(const vector<char>* scope);
+    // the part [method] names, which ranks as a -p [method] process: knn,
+    // mash or mepo; null for another
+    const Predictor* part(const string& method) const;
 
   private:
     MePo mepo;
@@ -204,6 +210,13 @@ void MeSh::set_scope(const vector<char>* scope) {
   Predictor::set_scope(scope);
   mepo.set_scope(scope);
   mash.set_scope(scope);
+}
+
+const Predictor* MeSh::part(const string& method) const {
+  if (method == "knn") return &mash.knn_part();
+  if (method == "mash") return &mash;
+  if (method == "mepo") return &mepo;
+  return nullptr;
 }
 
 LDPairVec MeSh::predict(const LVec& csyms, long maxth, long no_adv) const {
@@ -230,6 +243,8 @@ class MeShView : public ViewPredictor {
 
     LDPairVec predict_weighted(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
+    // as MeSh::part
+    const ViewPredictor* part(const string& method) const;
 
   private:
     const View& view;
@@ -242,6 +257,13 @@ MeShView::MeShView(const View& view, long sym_num, long max_deps,
   bool credit_deps, bool over)
 : view(view), mepo(view, sym_num, nullptr),
   mash(view, sym_num, max_deps, credit_deps), over(over) {}
+
+const ViewPredictor* MeShView::part(const string& method) const {
+  if (method == "knn") return &mash.knn_part();
+  if (method == "mash") return &mash;
+  if (method == "mepo") return &mepo;
+  return nullptr;
+}
 
 LDPairVec MeShView::predict_weighted(const LDPairVec& query,
   const vector<char>* in_scope, long no_adv) const {

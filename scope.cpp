@@ -76,15 +76,20 @@ void read_theories(const string& fname, const SLMap& th_no,
 // The scope of a query: the theorems of [view] (the process's if empty),
 // [k] predictions (-1 for -n's), none of [exclude]'s theorems, nor private
 // ones unless of [theory], nor [theory]'s past its first [before] (-1 for
-// none past); [ancestors]' theorems are boosted. [limits] says whether it has
-// a key other than view.
+// none past); [ancestors]' theorems are boosted. [method] names the part of a
+// -p mesh process that ranks the query (empty for the process's method).
+// [limits] says whether it has a key other than view and method, [scoped]
+// whether the query has a scope at all: brackets with a key other than
+// method, or none.
 struct Scope {
   string view;
+  string method;
   long k = -1;
   string theory;
   long before = -1;
   vector<string> exclude, ancestors;
   bool limits = false;
+  bool scoped = false;
 };
 
 long scope_number(const string& key, const string& value,
@@ -113,7 +118,7 @@ vector<string> scope_theories(const string& key, const string& value,
 }
 
 /* Parses the scope that may begin a query line,
-   [view=V k=8 theory=T before=3 exclude=A,B ancestors=C,D]
+   [view=V method=M k=8 theory=T before=3 exclude=A,B ancestors=C,D]
    each key at most once, in any order, into [scope]; returns the position
    after it, 0 if the line has none. */
 size_t parse_scope(const string& line, Scope& scope) {
@@ -136,11 +141,16 @@ size_t parse_scope(const string& line, Scope& scope) {
     const string value = eq == string::npos ? "" : item.substr(eq + 1);
     if (eq == string::npos || !seen.insert(key).second)
       exit_error("Bad scope item `" + item + "' in query `" + line + "'!");
-    scope.limits = scope.limits || key != "view";
+    scope.limits = scope.limits || (key != "view" && key != "method");
     if (key == "view") {
       if (!valid_theory(value))
         exit_error("Bad view `" + value + "' in query `" + line + "'!");
       scope.view = value;
+    }
+    else if (key == "method") {
+      if (value.empty())
+        exit_error("Bad method `' in query `" + line + "'!");
+      scope.method = value;
     }
     else if (key == "k") scope.k = scope_number(key, value, line);
     else if (key == "before") scope.before = scope_number(key, value, line);
@@ -158,6 +168,8 @@ size_t parse_scope(const string& line, Scope& scope) {
   }
   if (scope.before >= 0 && scope.theory.empty())
     exit_error("before needs theory in query `" + line + "'!");
+  // method= alone, as no brackets, makes no scope
+  scope.scoped = !(seen.size() == 1 && seen.count("method"));
   return end + 1;
 }
 

@@ -201,6 +201,12 @@ Each key may appear once, in any order, and each may be left out:
 
 - `view=V`: the query ranks the theorems of view `V` (see below), and the
   other keys apply within it.
+- `method=M`: on a `-p mesh` process, the query ranks with the part of
+  `mesh` that `M` names: `knn` (`mash`'s k-NN), `mash`, `mepo` or `mesh`
+  itself. The answer is that of a `-p M` process started alike (same corpus,
+  options and commands) answering the query without the key, in every view;
+  `-T` changes only `mesh`. Another process takes only its own method. Any
+  other method is an error. `[method=M]` alone, like `[view=V]`, is no scope.
 - `k=n`: the number of predictions for this query (at least 1), instead of
   `-n`'s.
 - `theory=T`: the query's own theory. Its private theorems may be predicted.
@@ -217,7 +223,7 @@ Each key may appear once, in any order, and each may be left out:
   printed, with `-S` each with the score it had before.
 
 Theories no theorem has may be named. A query with a scope (even `[]`, but
-not `[view=V]` alone, below) never predicts private theorems of theories
+not `[view=V]` or `[method=M]` alone) never predicts private theorems of theories
 other than its `theory`. A query
 without one ranks as it does without `-L`.
 
@@ -480,6 +486,8 @@ scores equal.
   corpus of a running process.
 - A process may hold versions of theories and views of them (`!version`,
   `!view`, `!drop`, `view=`).
+- A `-p mesh` process also ranks a query with its `knn`, `mash` or `mepo`
+  (`method=`).
 
 ## Provenance and licence
 

@@ -90,6 +90,7 @@ const long boost_depth = 128;
 // predictor for it; the versions and views, and [make_view], which builds a
 // predictor for a view, given the number of the versions' features.
 struct Session {
+  const string& method;
   Corpus& corpus;
   vector<unsigned char>& statures;
   Theories& theories;
@@ -292,6 +293,21 @@ void command(Session& s, const string& line, unique_ptr<Predictor>& p) {
     exit_error("Unknown command `" + line + "'!");
 }
 
+// The predictor that ranks a query with [scope]: [p], of the process's
+// method, or the part of it the scope's method= names. Only -p mesh has
+// parts (knn, mash and mepo); method= naming another is an error.
+template <class P, class MeShP>
+const P& method_part(const Session& s, const P& p, const Scope& scope,
+  const string& line) {
+  if (scope.method.empty() || scope.method == s.method) return p;
+  const P* part = s.method == "mesh"
+    ? static_cast<const MeShP&>(p).part(scope.method) : nullptr;
+  if (!part)
+    exit_error("Method `" + scope.method + "' does not work with -p " +
+               s.method + " in query `" + line + "'!");
+  return *part;
+}
+
 // Answers the query [line], whose scope [scope] ends at [start], on the
 // theorems of the view it names.
 void view_query(Session& s, string line, size_t start,
@@ -300,6 +316,8 @@ void view_query(Session& s, string line, size_t start,
   if (got == s.views.views.end())
     exit_error("Unknown view `" + scope.view + "' in query `" + line + "'!");
   const View& view = got->second;
+  const ViewPredictor& p = method_part<ViewPredictor, MeShView>(s,
+    *view.predictor, scope, line);
   const long n = view.size();
   const long k = min(n, scope.k > 0 ? scope.k : s.predno);
   const long no_adv = scope.ancestors.empty() ? k
@@ -315,7 +333,7 @@ void view_query(Session& s, string line, size_t start,
     query.erase(remove_if(query.begin(), query.end(),
       [&](const TypedSym& f) { return view.rank_of(f.sym) < 0; }),
       query.end());
-    ans = static_cast<const MePoView&>(*view.predictor).predict_typed(query,
+    ans = static_cast<const MePoView&>(p).predict_typed(query,
       scope.limits ? &in_scope : nullptr, no_adv);
   }
   else {
@@ -324,7 +342,7 @@ void view_query(Session& s, string line, size_t start,
     query.erase(remove_if(query.begin(), query.end(),
       [&](const pair<long, double>& f) { return view.rank_of(f.first) < 0; }),
       query.end());
-    ans = view.predictor->predict_weighted(query,
+    ans = p.predict_weighted(query,
       scope.limits ? &in_scope : nullptr, no_adv);
   }
   ans.resize(min(no_adv, (long)ans.size()));
@@ -363,7 +381,9 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
       view_query(s, line, start, scope);
       continue;
     }
-    const bool scoped = start > 0;
+    const Predictor& ranker = method_part<Predictor, MeSh>(s, *p, scope,
+      line);
+    const bool scoped = scope.scoped;
     const long k = min(n, scope.k > 0 ? scope.k : s.predno);
     const long no_adv = scope.ancestors.empty() ? k
       : min(n, max(k, boost_depth));
@@ -373,7 +393,7 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
 
     LDPairVec ans;
     if (s.corpus.types)
-      ans = static_cast<MePo&>(*p).predict_typed(
+      ans = static_cast<const MePo&>(ranker).predict_typed(
         parse_typed_query(line.begin() + start, line.end(), s.corpus.sym_no,
           *s.corpus.types), n, no_adv);
     else {
@@ -383,7 +403,7 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
       query.erase(remove_if(query.begin(), query.end(),
         [&](const pair<long, double>& f) {
           return s.corpus.sym_ths[f.first].empty(); }), query.end());
-      ans = p->predict_weighted(query, n, no_adv);
+      ans = ranker.predict_weighted(query, n, no_adv);
     }
     ans.resize(min(no_adv, (long)ans.size()));
     if (!scope.ancestors.empty()) {
@@ -719,7 +739,7 @@ int main(int argc, char* argv[]) {
           n_features, depweight));
       return p;
     };
-    Session session{corpus, statures, theories, make, Views(), make_view,
+    Session session{method, corpus, statures, theories, make, Views(), make_view,
       predno, boost, scores, import_path.empty() && export_path.empty(),
       snapshot_syms};
     interaction(predictor, session);
