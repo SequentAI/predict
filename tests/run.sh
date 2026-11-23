@@ -1803,9 +1803,14 @@ for c in 'knn:A.a B.e A.c A.b ' \
   fi
 done
 if [ -z "$msg" ]; then
-  # the dependencies take the score of the neighbour that placed them
-  out=$(checked place -p knn -n 3 -S <<<'"x", "y"' | scores_of | awk '{print $2}' | sort -u | wc -l)
-  [ "$out" -eq 1 ] || msg="-S gives the first 3 theorems $out scores, not 1"
+  # the dependencies take the score of the neighbour that placed them: A.a's
+  # similarity, its score with -c 0
+  own=$(checked place -p knn -c 0 -n 1 -S <<<'"x", "y"' | scores_of)
+  out=$(checked place -p knn -n 3 -S <<<'"x", "y"' | scores_of | tr '\n' ' ')
+  s=${own#A.a }
+  want="A.a $s B.e $s A.c $s "
+  [[ $own == "A.a "* ]] && [ "$out" = "$want" ] ||
+    msg="-S gave '$out', not '$want'"
 fi
 if [ -n "$msg" ]; then fail "knn dependency placement" "$msg"; else ok "knn dependency placement"; fi
 
