@@ -121,10 +121,9 @@ for m in knn nbayes mepo mepo-cosine mash mesh rforest; do
 done
 if [ -z "$msg" ]; then
   # b's knn neighbours: if featureless theorems shared a feature, a would be
-  # a neighbour with positive similarity and b's top score would exceed the
-  # bare age of the first neighbour, 500000000
+  # a neighbour with positive similarity, and so b's top score
   out=$(run empty -p knn -n 1 -S -e "$WORK/empty.eval")
-  if [[ $out != "b:"?" (500000000) " ]]; then
+  if [[ $out != "b:"?" (0) " ]]; then
     msg="featureless theorems share a feature: '$out'"
   elif ! run empty -p knn -n 4 -S <<<'"x"' | finite_scores; then
     msg="knn score not finite with a neighbour without dependencies"
@@ -147,8 +146,8 @@ for q in '"a\"b"' '"c\\d"' '"e\nf"'; do
   fi
 done
 if [ -z "$msg" ]; then
-  out=$(run escape -p knn -n 2 <<<'"g"')
-  if [ "$out" != 'p:q r\s ' ] || grep -q missing "$WORK/stderr"; then
+  out=$(run escape -p knn -n 3 <<<'"g"')
+  if [ "$out" != 't p:q r\s ' ] || grep -q missing "$WORK/stderr"; then
     msg="dependencies of t with escaped ids gave '$out', stderr '$(cat "$WORK/stderr")'"
   fi
 fi
@@ -175,8 +174,8 @@ out=$(run future -p knn -n 2 <<<'"x", "y"')
 # later than a but earlier than c, and must be predicted
 printf 'c\n' > "$WORK/future.eval"
 msg=
-if [ "$out" != "b a " ]; then
-  msg="knn gave '$out', not 'b a' (b is only reachable as a's dependency)"
+if [ "$out" != "a b " ]; then
+  msg="knn gave '$out', not 'a b' (b is only reachable as a's dependency)"
 else
   for m in knn nbayes mepo mepo-cosine mash mesh rforest; do
     out=$(run future -p $m -n 2 -e "$WORK/future.eval")
@@ -659,17 +658,18 @@ if [ -n "$msg" ]; then fail "mash fusion" "$msg"; else ok "mash fusion"; fi
 
 # 22. -c turns off the credit knn gives the dependencies of neighbours
 number=22
-# a depends on f. With credit (-c 1, the default), knn ranks f a b c and
-# naive Bayes f d c a: f scores s(0) + s(0) = 2, a s(1) + s(3) = 1.0044,
-# b s(2) = 0.468906, c s(3) + s(2) = 0.853306 and d s(1) = 0.62: f a c d.
-# Without it (-c 0), knn ranks a b c d: a scores s(0) + s(3) = 1.3844, b
-# s(1) = 0.62, c s(2) + s(2) = 0.937812, d s(3) + s(1) = 1.0044 and f s(0)
-# = 1: a d f c.
+# a depends on f. With credit (-c 1, the default), -p knn places f right
+# after a: a f b c. mash fuses knn's credited ranking instead, where a's
+# credit puts f first: f a b c. With naive Bayes's f d c a, f scores s(0) +
+# s(0) = 2, a s(1) + s(3) = 1.0044, b s(2) = 0.468906, c s(3) + s(2) =
+# 0.853306 and d s(1) = 0.62: f a c d. Without credit (-c 0), knn ranks
+# a b c d both ways: a scores s(0) + s(3) = 1.3844, b s(1) = 0.62, c s(2) +
+# s(2) = 0.937812, d s(3) + s(1) = 1.0044 and f s(0) = 1: a d f c.
 cp "$WORK/fuse.seq" "$WORK/credit.seq"
 cp "$WORK/fuse.syms" "$WORK/credit.syms"
 printf 'a:f\n' > "$WORK/credit.deps"
 msg=
-for cw in "-c 1:f a b c :f d c a :f a c d " ":f a b c :f d c a :f a c d " \
+for cw in "-c 1:a f b c :f d c a :f a c d " ":a f b c :f d c a :f a c d " \
           "-c 0:a b c d :f d c a :a d f c "; do
   IFS=: read -r opt wknn wnb want <<<"$cw"
   knn=$(run credit -p knn -n 4 $opt <<<'"x", "y"')

@@ -22,15 +22,19 @@ struct Leg {
   LVec ranking;
 };
 
-// The theorem ids of the first n of p's predictions for query
-LVec first_ids(const Predictor& p, const LDPairVec& query, long maxth,
-  long n) {
-  n = min(n, maxth);
-  const LDPairVec ans = p.predict_weighted(query, maxth, n);
+// The theorem ids of the first n predictions of ans
+LVec first_ids(const LDPairVec& ans, long n) {
   LVec ids;
   for (long j = 0; j < min(n, (long)ans.size()); ++j)
     ids.push_back(ans[j].first);
   return ids;
+}
+
+// The theorem ids of the first n of p's predictions for query
+LVec first_ids(const Predictor& p, const LDPairVec& query, long maxth,
+  long n) {
+  n = min(n, maxth);
+  return first_ids(p.predict_weighted(query, maxth, n), n);
 }
 
 // mesh_facts: the candidates are the first max_facts theorems of each leg.
@@ -75,7 +79,8 @@ class MaSh : public Predictor {
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
     void set_scope(const vector<char>* scope);
-    // the knn it fuses, which ranks as a -p knn process
+    // its knn, which ranks as a -p knn process; MaSh fuses knn's credited
+    // ranking (kNN::predict_credited)
     const Predictor& knn_part() const { return knn; }
 
   private:
@@ -108,9 +113,11 @@ LDPairVec MaSh::predict(const LVec& csyms, long maxth, long no_adv) const {
 
 LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
-  LDPairVec ans = mesh_facts({{0.5, first_ids(nbayes, query, maxth, no_adv)},
-                              {0.5, first_ids(knn, query, maxth, no_adv)}},
-    maxth, no_adv);
+  const long n = min(no_adv, maxth);
+  LDPairVec ans = mesh_facts(
+    {{0.5, first_ids(nbayes, query, maxth, no_adv)},
+     {0.5, first_ids(knn.predict_credited(query, maxth, n), n)}}, maxth,
+    no_adv);
   sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
 }
@@ -120,11 +127,7 @@ LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
 LVec first_ids(const ViewPredictor& p, const LDPairVec& query,
   const vector<char>* in_scope, long size, long n) {
   n = min(n, size);
-  const LDPairVec ans = p.predict_weighted(query, in_scope, n);
-  LVec ids;
-  for (long j = 0; j < min(n, (long)ans.size()); ++j)
-    ids.push_back(ans[j].first);
-  return ids;
+  return first_ids(p.predict_weighted(query, in_scope, n), n);
 }
 
 // MaSh's ranking of the theorems of a view, from its parts' views, as MaSh
@@ -151,9 +154,11 @@ MaShView::MaShView(const View& view, long sym_num, long max_deps,
 LDPairVec MaShView::predict_weighted(const LDPairVec& query,
   const vector<char>* in_scope, long no_adv) const {
   const long n = view.size();
+  const long m = min(no_adv, n);
   LDPairVec ans = mesh_facts(
     {{0.5, first_ids(nbayes, query, in_scope, n, no_adv)},
-     {0.5, first_ids(knn, query, in_scope, n, no_adv)}}, n, no_adv);
+     {0.5, first_ids(knn.predict_credited(query, in_scope, m), m)}}, n,
+    no_adv);
   sort_prediction(ans, keep_in_scope(ans, in_scope, no_adv));
   return ans;
 }

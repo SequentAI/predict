@@ -11,10 +11,17 @@ class kNN : public Predictor {
     void learn(long from, long to);
     bool forget(long from);
 
+    // The ranking MaSh fuses (see credit_neighbours)
+    LDPairVec predict_credited(const LDPairVec& query, long maxth,
+      long no_adv) const;
+
   protected:
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
 
   private:
+    // (i, similarity of theorem i to the query) for each i < maxth
+    LDPairVec similarities(const LVec& csyms, long maxth) const;
+
     Tfidf tfidf;
     bool credit_deps;
 };
@@ -41,10 +48,50 @@ inline double age(long k) {
   return 500000000 - 100 * k;
 }
 
-// The k-NN ranking: [ans] holds (i, 0) for each theorem i, [neighbours] the
-// similarity to the query of each theorem that may be predicted;
-// [deps_of](i) gives the dependencies of theorem i, and [visible](i) whether
-// it may be predicted.
+// The ranking of -p knn: the neighbours of the query by similarity, each
+// followed at once by its dependencies that may be predicted (with
+// [credit_deps]), each theorem at its first place, cut to [no_adv]. This is
+// how HOL4's thmknn_wdep places them (src/AI/machine_learning/
+// mlNearestNeighbor.sml at commit 5f75e639a915 of HOL-Theorem-Prover/HOL).
+// [neighbours] holds the similarity to the query of each theorem that may be
+// predicted, of the [n] theorems; [deps_of](i) gives the dependencies of
+// theorem i, and [visible](i) whether it may be predicted. A theorem scores
+// the similarity of the neighbour that placed it.
+template <class DepsOf, class Visible>
+LDPairVec place_deps(LDPairVec neighbours, long n, long no_adv,
+  bool credit_deps, DepsOf deps_of, Visible visible) {
+  // each neighbour places at least itself, unless placed already as a
+  // dependency: no_adv neighbours are enough
+  const long k = min(no_adv, (long)neighbours.size());
+  partial_sort(neighbours.begin(), neighbours.begin() + k, neighbours.end(),
+    sortfun);
+  vector<char> placed(n, 0);
+  LDPairVec ans;
+  const auto place = [&](long i, double score) {
+    if (placed[i]) return;
+    placed[i] = 1;
+    ans.push_back(make_pair(i, score));
+  };
+  for (long j = 0; j < k && (long)ans.size() < no_adv; ++j) {
+    const long nn = neighbours[j].first;
+    const double o = neighbours[j].second;
+    place(nn, o);
+    if (!credit_deps) continue;
+    for (const auto d : deps_of(nn))
+      if (visible(d)) place(d, o);
+  }
+  ans.resize(min(no_adv, (long)ans.size()));
+  return ans;
+}
+
+// The ranking MaSh fuses, Isabelle's MaSh k-NN (k_nearest_neighbors in
+// src/HOL/Tools/Sledgehammer/sledgehammer_mash.ML at the commit mesh.cpp
+// cites): each neighbour credits its dependencies with part of its
+// similarity, and the theorems are sorted by credit. So there are two
+// orders: -p knn places dependencies as HOL4's k-NN premise filter does,
+// while mash fuses the k-NN that Isabelle's MaSh fuses.
+// [ans] holds (i, 0) for each theorem i; the other arguments are
+// place_deps'.
 template <class DepsOf, class Visible>
 void credit_neighbours(LDPairVec& ans, LDPairVec neighbours, long no_adv,
   bool credit_deps, DepsOf deps_of, Visible visible) {
@@ -101,7 +148,7 @@ void credit_neighbours(LDPairVec& ans, LDPairVec neighbours, long no_adv,
   }
 }
 
-LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
+LDPairVec kNN::similarities(const LVec& csyms, long maxth) const {
   LDPairVec ans = LDPairVec(maxth, make_pair(0, 0));
 
   // initialise theorem importance matrix
@@ -118,7 +165,22 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
       if (visible(th, maxth)) ans[th].second += pow(weight, 6);
     }
   }
+  return ans;
+}
 
+LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
+  LDPairVec neighbours = similarities(csyms, maxth);
+  keep_visible(neighbours, maxth);
+  return place_deps(move(neighbours), maxth, no_adv, credit_deps,
+    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return visible(i, maxth); });
+}
+
+LDPairVec kNN::predict_credited(const LDPairVec& query, long maxth,
+  long no_adv) const {
+  LVec csyms;
+  for (const auto& q : query) csyms.push_back(q.first);
+  LDPairVec ans = similarities(csyms, maxth);
   LDPairVec neighbours(ans);
   keep_visible(neighbours, maxth);
   credit_neighbours(ans, move(neighbours), no_adv, credit_deps,
@@ -138,8 +200,15 @@ class kNNView : public ViewPredictor {
 
     LDPairVec predict_weighted(const LDPairVec& query,
       const vector<char>* in_scope, long no_adv) const;
+    // as kNN::predict_credited
+    LDPairVec predict_credited(const LDPairVec& query,
+      const vector<char>* in_scope, long no_adv) const;
 
   private:
+    // as kNN::similarities, for the theorems in scope
+    LDPairVec similarities(const LDPairVec& query,
+      const vector<char>* in_scope) const;
+
     const View& view;
     bool credit_deps;
     Tfidf tfidf;  // by rank
@@ -154,14 +223,14 @@ kNNView::kNNView(const View& view, long sym_num, bool credit_deps)
     for (const auto& s : v->syms) tfidf.add(ranks_in(s, table));
 }
 
-LDPairVec kNNView::predict_weighted(const LDPairVec& query,
-  const vector<char>* in_scope, long no_adv) const {
+LDPairVec kNNView::similarities(const LDPairVec& query,
+  const vector<char>* in_scope) const {
   const auto visible = [&](long i) { return !in_scope || (*in_scope)[i]; };
   const long n = view.size();
   LDPairVec ans(n);
   for (long i = 0; i < n; ++i) ans[i] = make_pair(i, 0.0);
 
-  // as in kNN::predict, a feature's weight added in query order
+  // as in kNN::similarities, a feature's weight added in query order
   for (const auto& fw : query) {
     const double weight = tfidf.get(view.rank_of(fw.first));
     for (size_t v = 0; v < view.versions.size(); ++v) {
@@ -172,7 +241,24 @@ LDPairVec kNNView::predict_weighted(const LDPairVec& query,
       }
     }
   }
+  return ans;
+}
 
+LDPairVec kNNView::predict_weighted(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  const long n = view.size();
+  LDPairVec neighbours = similarities(query, in_scope);
+  keep_in_scope(neighbours, in_scope, n);
+  return place_deps(move(neighbours), n, no_adv, credit_deps,
+    [&](long i) { return view.deps_of(i, ids); },
+    [&](long i) { return !in_scope || (*in_scope)[i]; });
+}
+
+LDPairVec kNNView::predict_credited(const LDPairVec& query,
+  const vector<char>* in_scope, long no_adv) const {
+  const auto visible = [&](long i) { return !in_scope || (*in_scope)[i]; };
+  const long n = view.size();
+  LDPairVec ans = similarities(query, in_scope);
   LDPairVec neighbours(ans);
   keep_in_scope(neighbours, in_scope, n);
   credit_neighbours(ans, move(neighbours), no_adv, credit_deps,
