@@ -305,8 +305,9 @@ the theorems of `V`'s version of the theory, a dependency names a theorem
 and means `V`'s version of it, a query feature that no theorem of `V` has is
 dropped (with `-P`, one that `V`'s theorems have only in frequency-only
 tokens is kept, as such a process keeps it), and the statistics (IDF, ...)
-are learned from `V`'s theorems alone. `[view=V]` alone ranks as a query without a scope; other keys make a
-scope within `V`. A view that does not exist is an error.
+are learned from `V`'s theorems alone. `[view=V]` alone, or with only
+`method=`, ranks as a query without a scope; other keys make a scope within
+`V`. A view that does not exist is an error.
 
 The theorems read at start-up and by `!add` and `!replace` form the default
 view, which queries without `view=` rank, as before. Named views hold only

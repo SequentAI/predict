@@ -1694,17 +1694,22 @@ LIMIT=5
 # process answers it without the key, scores included, for M = knn, mash,
 # mepo and mesh: alone (no scope, so T's private theorems may be predicted),
 # with other keys, and on a view; with -T 51n/50 too, which changes only
-# mesh. The processes start on the snapshot of 49 and T1, a third of whose
-# theorems are private. A -p M process takes method=M; any other method, and
-# one a -p mesh process has no part for, is an error. MePo predicts 50 on
-# the checked build, as in 47.
+# mesh. The processes start on the snapshot of 49 and T1, and the view
+# holds S2 and S3; a third of the theorems of T, S2 and S3 are private. A
+# -p M process takes method=M; any other method, and one a -p mesh process
+# has no part for, is an error. MePo predicts 50 on the checked build, as in
+# 47.
 number=50
 LIMIT=600
 msg=
 sed '1~3s/$/ private/' "$WORK/T1.thy" > "$WORK/Tp.thy"
+for k in 2 3; do
+  for f in seq syms deps; do cp "$WORK/S${k}a.$f" "$WORK/S${k}p.$f"; done
+  sed '1~3s/$/ private/' "$WORK/S${k}a.thy" > "$WORK/S${k}p.thy"
+done
 printf 'S2 a\nS3 a\n' > "$WORK/w.view"
-setup="!version S2 a $(files S2a)
-!version S3 a $(files S3a)
+setup="!version S2 a $(files S2p)
+!version S3 a $(files S3p)
 !view w $WORK/w.view"
 mq=$(head -3 "$WORK/synth.wqueries"; head -2 "$WORK/synth.queries" | sed 's/^/[theory=T before=100 exclude=S9 k=20]/')
 vq=$(head -3 "$WORK/synth.wqueries" | sed 's/^/[view=w]/'; head -2 "$WORK/synth.queries" | sed 's/^/[view=w theory=S3 before=200 exclude=S2]/')
@@ -1735,19 +1740,29 @@ if [ -z "$msg" ]; then
   [ "$(checked dag -p knn -L "$WORK/dag.thy" -S <<<"$q")" = "$(checked dag -p knn -L "$WORK/dag.thy" -S <<<'"p"')" ] ||
     msg="method=knn on -p knn ranks otherwise"
 fi
-for c in 'mesh [method=nbayes]"p"' 'mesh [method=mepo-cosine]"p"' 'mesh [method=]"p"' \
-         'mesh [method=knn method=mash]"p"' 'mash [method=knn]"p"' 'knn [method=mesh]"p"' \
-         'mepo [k=3 method=mash]"p"'; do
+# <method> <query> <what stderr says>
+for c in 'mesh [method=nbayes]"p" does not work with -p mesh' \
+         'mesh [method=mepo-cosine]"p" does not work with -p mesh' \
+         'mesh [method=]"p" Bad method' \
+         'mesh [method=knn method=mash]"p" Bad scope item' \
+         'mash [method=knn]"p" does not work with -p mash' \
+         'knn [method=mesh]"p" does not work with -p knn' \
+         'mepo [k=3 method=mash]"p" does not work with -p mepo'; do
   [ -n "$msg" ] && break
-  out=$(run dag -p ${c%% *} -L "$WORK/dag.thy" <<<"${c#* }")
+  m=${c%% *} q=${c#* }
+  why=${q#*\"p\" }
+  q=${q%% "$why"}
+  out=$(run dag -p $m -L "$WORK/dag.thy" <<<"$q")
   status=$?
-  if [ $status -eq 0 ] || [ -n "$out" ]; then msg="-p $c: exit status $status, output '$out'"; fi
+  if [ $status -ne 1 ] || [ -n "$out" ] || ! grep -q "$why" "$WORK/stderr"; then
+    msg="-p $m '$q': exit status $status, output '$out', stderr '$(head -1 "$WORK/stderr")'"
+  fi
 done
 if [ -z "$msg" ]; then
   out=$(run T1 -i "$WORK/b.snap" -L "$WORK/Tp.thy" -p mesh <<<"$setup
 [view=w method=nbayes]\"f1\"")
   status=$?
-  if [ $status -eq 0 ] || [ "$out" != $'1750\n2250\n2250' ] || ! grep -q "does not work with -p mesh" "$WORK/stderr"; then
+  if [ $status -ne 1 ] || [ "$out" != $'1750\n2250\n2250' ] || ! grep -q "does not work with -p mesh" "$WORK/stderr"; then
     msg="method=nbayes on a view of -p mesh: exit status $status, output '$out'"
   fi
 fi
