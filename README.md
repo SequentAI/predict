@@ -300,7 +300,8 @@ right before the `!view` that uses it.
 A query whose scope has `view=V` ranks exactly as a process started on the
 theorems of `V` would rank it, with `-L` giving their theories: the theorems
 of `V`'s versions, in the order the versions were stored, each version's in
-`<seq>` order. So equal scores are ranked in that order, `before=n` counts
+`<seq>` order. So equal scores are ranked in that order (but for the
+dependencies `knn` places after a neighbour), `before=n` counts
 the theorems of `V`'s version of the theory, a dependency names a theorem
 and means `V`'s version of it, a query feature that no theorem of `V` has is
 dropped (with `-P`, one that `V`'s theorems have only in frequency-only
@@ -458,9 +459,9 @@ ranked in `<seq>` order. Isabelle also divides the sum by the number of
 inputs and rounds it to a multiple of 1e-8, which can only make nearly equal
 scores equal.
 
-- `mash` fuses `nbayes` and `knn`, weighted 0.5 each, each cut to `M`
-  theorems. Since both are cut alike, a theorem's score orders as the sum of
-  its two rank weights.
+- `mash` fuses `nbayes` and `knn`'s credited ranking (not `-p knn`'s order;
+  see above), weighted 0.5 each, each cut to `M` theorems. Since both are
+  cut alike, a theorem's score orders as the sum of its two rank weights.
 - `mesh` fuses `mepo` and `mash`, weighted 0.5 each. `-T` sets how they are
   cut: `-T 2M+25`, the default, cuts `mepo` to `M` theorems and `mash` to
   `2M + 25`; `-T 51n/50` cuts both to `51n/50`, rounded down. Each input is
