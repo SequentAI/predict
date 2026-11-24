@@ -11,10 +11,19 @@
 // time. A snapshot is read only by a predict built from the commit that wrote
 // it.
 //
-// Layout: the magic line, the version (a string), the theorem names (a list of
+// Layout: the magic line, the version (a string), 1 if it keeps typed symbols
+// apart (-P with knn, mash or mesh) else 0, the theorem names (a list of
 // strings), the feature hashes (their number, then 8 bytes each, least
 // significant first), then per theorem its dependencies, per theorem its
-// features, per feature its theorems (each a list of numbers). A number is a
+// features, per feature its theorems (each a list of numbers). With typed
+// symbols, then the type table: its constructor names (a list of strings),
+// its patterns and its (order, patterns) pairs (each their number, then each
+// a list: the constructor's number plus 1, or 0 for a variable, then the
+// argument patterns; the order, then the patterns); the typed symbols'
+// hashes, per theorem its typed symbols, per typed symbol its theorems; per
+// theorem its typed symbols and then its frequency-only occurrences (each
+// their number, then each a list: symbol, (order, patterns), kind, count).
+// A number is a
 // LEB128 varint; a string is its length and its bytes; a list of strings is
 // its length and its elements; a list of numbers is its length and each
 // element's difference from the previous one (from 0 for the first),
@@ -22,10 +31,11 @@
 
 const string snapshot_magic = "predict snapshot\n";
 
-// The theorems predict holds. A snapshot holds all but the typed symbols:
-// with [types] (-P), [typed] and [freq_only] give each theorem's typed
-// symbols and frequency-only occurrences, as read_syms reads them; without,
-// they are empty.
+// The theorems predict holds: with [types] (-P), [typed] and [freq_only]
+// give each theorem's typed symbols and frequency-only occurrences, as
+// read_syms reads them; without, they are empty. With [split], the typed
+// symbols are numbered apart from the features. A snapshot holds it all
+// only with [split]; -P without it does not work with snapshots.
 struct Corpus {
   SVec &no_th, &no_sym;
   SLMap &th_no;
@@ -33,6 +43,7 @@ struct Corpus {
   LVecVec &deps, &syms, &sym_ths;
   TypeTable *types;
   TypedSyms &typed, &freq_only;
+  TypedTable *split;
 };
 
 class SnapshotWriter {
@@ -54,25 +65,54 @@ class SnapshotWriter {
     void hash(uint64_t h) {
       for (int i = 0; i < 8; ++i, h >>= 8) buf.push_back(char(h & 0xff));
     }
+    void hashes(const HLMap &no, size_t n) {
+      vector<uint64_t> hs(n);
+      for (const auto& h : no) hs[h.second] = h.first;
+      number(n);
+      for (const auto h : hs) hash(h);
+    }
+    void keys(const vector<TypeTable::Key> &ks, long shift) {
+      number(ks.size());
+      for (const auto& k : ks) {
+        LVec l(1, k.first + shift);
+        l.insert(l.end(), k.second.begin(), k.second.end());
+        list(l);
+      }
+    }
+    void typed(const TypedSyms &tss) {
+      for (const auto& ts : tss) {
+        number(ts.size());
+        for (const auto& t : ts) list(LVec{t.sym, t.ptype, t.kind, t.count});
+      }
+    }
     string buf;
 };
 
 // Writes [c] to [fname] as a snapshot of predict [version].
 void write_snapshot(const string &fname, const string &version,
   const Corpus &c) {
-  vector<uint64_t> hashes(c.no_sym.size());
-  for (const auto& hs : c.sym_no) hashes[hs.second] = hs.first;
-
   SnapshotWriter w;
   w.buf = snapshot_magic;
   w.str(version);
+  w.number(c.split ? 1 : 0);
   w.number(c.no_th.size());
   for (const auto& s : c.no_th) w.str(s);
-  w.number(hashes.size());
-  for (const auto h : hashes) w.hash(h);
+  w.hashes(c.sym_no, c.no_sym.size());
   for (const auto& l : c.deps) w.list(l);
   for (const auto& l : c.syms) w.list(l);
   for (const auto& l : c.sym_ths) w.list(l);
+  if (c.split) {
+    const SVec ctors = c.types->ctors();
+    w.number(ctors.size());
+    for (const auto& s : ctors) w.str(s);
+    w.keys(c.types->patterns(), 1);
+    w.keys(c.types->ptype_keys(), 0);
+    w.hashes(c.split->sym_no, c.split->no_sym.size());
+    for (const auto& l : c.split->syms) w.list(l);
+    for (const auto& l : c.split->sym_ths) w.list(l);
+    w.typed(c.typed);
+    w.typed(c.freq_only);
+  }
 
   ofstream out(fname, ios::binary);
   out.write(w.buf.data(), w.buf.size());
@@ -132,6 +172,54 @@ class SnapshotReader {
       return true;
     }
     size_t left() const { return buf.size() - pos; }
+    // Reads [n] hashes into [no], numbering them in order; clears [unique]
+    // if one occurs twice.
+    bool hashes(HLMap &no, uint64_t &n, bool &unique) {
+      if (!number(n) || left() / 8 < n) return false;
+      for (uint64_t i = 0; i < n; ++i) {
+        uint64_t h = 0;
+        hash(h);
+        unique = no.emplace(h, i).second && unique;
+      }
+      return true;
+    }
+    bool keys(vector<TypeTable::Key> &ks, long shift) {
+      uint64_t n;
+      bool in_range = true;
+      if (!number(n) || left() < n) return false;
+      ks.resize(n);
+      for (auto& k : ks) {
+        if (!list(k.second, UINT64_MAX, in_range) || k.second.empty())
+          return false;
+        k.first = k.second[0] - shift;
+        k.second.erase(k.second.begin());
+      }
+      return true;
+    }
+    // Reads [tss]' lists of typed symbols, clearing [in_range] if one is not
+    // as read_syms reads them: its symbol below [syms], its (order,
+    // patterns) below [ptypes], its kind c, v, a or t, and its count at most
+    // max_count and at least 1 ([freq_only], or kinds c and v).
+    bool typed(TypedSyms &tss, uint64_t syms, uint64_t ptypes, bool freq_only,
+               bool &in_range) {
+      for (auto& ts : tss) {
+        uint64_t n;
+        if (!number(n) || left() < n) return false;
+        ts.resize(n);
+        for (auto& t : ts) {
+          LVec l;
+          bool ok = true;
+          if (!list(l, UINT64_MAX, ok) || l.size() != 4) return false;
+          const bool zero_ok = !freq_only && (l[2] == 'a' || l[2] == 't');
+          in_range = in_range && l[0] >= 0 && l[0] < (long)syms &&
+            l[1] >= 0 && l[1] < (long)ptypes &&
+            (l[2] == 'c' || l[2] == 'v' || l[2] == 'a' || l[2] == 't') &&
+            l[3] >= (zero_ok ? 0 : 1) && l[3] <= max_count;
+          t = TypedSym{l[0], l[1], char(l[2]), l[3], 1.0};
+        }
+      }
+      return true;
+    }
 
   private:
     const string &buf;
@@ -155,6 +243,11 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
   if (!r.str(v)) return "truncated";
   if (v != version)
     return "written by predict " + v + ", this is predict " + version;
+  uint64_t split;
+  if (!r.number(split)) return "truncated";
+  if (split != (c.split ? 1 : 0))
+    return split ? "written with -P, read without" :
+      "written without -P, read with";
 
   uint64_t n;
   // each name takes at least a byte
@@ -162,13 +255,10 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
   c.no_th.resize(n);
   for (auto& s : c.no_th)
     if (!r.str(s)) return "truncated";
-  if (!r.number(n) || r.left() / 8 < n) return "truncated";
+  bool unique = true;
+  if (!r.hashes(c.sym_no, n, unique)) return "truncated";
+  if (!unique) return "a feature hash occurs twice";
   c.no_sym.resize(n);
-  for (size_t i = 0; i < n; ++i) {
-    uint64_t h = 0;
-    r.hash(h);
-    if (!c.sym_no.emplace(h, i).second) return "a feature hash occurs twice";
-  }
 
   c.deps.resize(c.no_th.size());
   c.syms.resize(c.no_th.size());
@@ -180,6 +270,34 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
     if (!r.list(l, c.no_sym.size(), in_range)) return "truncated";
   for (auto& l : c.sym_ths)
     if (!r.list(l, c.no_th.size(), in_range)) return "truncated";
+  if (c.split) {
+    if (!r.number(n) || r.left() < n) return "truncated";
+    SVec ctors(n);
+    for (auto& s : ctors)
+      if (!r.str(s)) return "truncated";
+    vector<TypeTable::Key> patterns, ptypes;
+    if (!r.keys(patterns, 1) || !r.keys(ptypes, 0)) return "truncated";
+    for (const auto& pt : ptypes)
+      if (pt.first < 0 || pt.first > max_count)
+        return "its type table is malformed";
+    if (!c.types->restore(ctors, patterns, ptypes))
+      return "its type table is malformed";
+    TypedTable& t = *c.split;
+    if (!r.hashes(t.sym_no, n, unique)) return "truncated";
+    if (!unique) return "a typed symbol's hash occurs twice";
+    t.no_sym.resize(n);
+    t.syms.resize(c.no_th.size());
+    t.sym_ths.resize(n);
+    for (auto& l : t.syms)
+      if (!r.list(l, n, in_range)) return "truncated";
+    for (auto& l : t.sym_ths)
+      if (!r.list(l, c.no_th.size(), in_range)) return "truncated";
+    c.typed.resize(c.no_th.size());
+    c.freq_only.resize(c.no_th.size());
+    if (!r.typed(c.typed, n, ptypes.size(), false, in_range) ||
+        !r.typed(c.freq_only, n, ptypes.size(), true, in_range))
+      return "truncated";
+  }
   if (r.left() != 0) return "longer than its contents";
   if (!in_range) return "a number is out of range";
 

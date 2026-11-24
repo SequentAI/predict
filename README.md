@@ -57,7 +57,10 @@ from the text files the snapshot was written from, followed by the added
 theorems' lines. The one exception is a dependency of a snapshot's theorem
 on a theorem added after it, which the snapshot dropped when it was written,
 as `<deps>` drops one missing from `<seq>`. `-i` and `-o` together write the
-corpus with the added theorems to a new snapshot. Neither works with `-P`.
+corpus with the added theorems to a new snapshot. With `-P`, they work for
+`knn`, `mash` and `mesh`, not `mepo`; such a snapshot also holds the typed
+symbols ("Typed symbols" below) and their types, and is read only with `-P`,
+as one written without `-P` is read only without it.
 
 A snapshot holds the theorem names, the features' hashes (below) and the
 numbers `predict` gives theorems and features, and nothing learned: learning
@@ -152,6 +155,14 @@ Sledgehammer's frequencies count every constant occurrence of a fact,
 including the quantifiers it doesn't take as the fact's symbols, so
 `"bool$!"<c 2 _>+3` gives three such occurrences of a quantifier. Without
 `-P`, frequency-only tokens are ignored.
+
+With `-P`, `knn`, `mash` and `mesh` keep the typed symbols apart from the
+features. A token with a type (in `<syms>`, also one with a `*count` or a
+`+count`; a query has neither) is then only a typed symbol, which `mepo` inside `mesh` ranks as
+`-p mepo -P` ranks a corpus and query of those tokens alone; any other token
+is only a feature, which `knn` and `nbayes` rank as they do without `-P`.
+So a theorem's lines can hold both the features of `mash` and the typed
+symbols of `mepo`; `mash` and `mesh` then fuse otherwise (below).
 
 `<statures>`, given with `-F` and read only by `mepo` (also inside `mesh`),
 flags theorems:
@@ -258,7 +269,7 @@ prints the number of theorems the process holds (see "Versions and views").
 When `<theory>`'s theorems are the last ones (or it has none), no other
 theorem depends on one, no feature they gave first in `<syms>` (beyond a
 snapshot's) is another theorem's or comes before one another theorem gave
-first, and `-P` is not given, as when a process follows the theory being
+first, and `-P` is not given with `-p mepo`, as when a process follows the theory being
 edited, they are cut off the end, and the rankings, scores included, are
 those of a process started on the changed corpus (from the same snapshot, if
 any), unless an earlier `!replace` of the process took the other way, below;
@@ -321,7 +332,8 @@ wrong number of arguments, a file that cannot be read) is an error before
 anything changes. Versions have no `-F` flags. As with `!add` and
 `!replace`, the commands work neither with `-x` nor with `-y`.
 
-Every method has views (`mepo` also with `-P`), each ranking as a fresh
+Every method has views (`mepo` also with `-P`; with `-P`, `knn`, `mash` and
+`mesh` refuse `!version` and `!view`), each ranking as a fresh
 process on the view's theorems, as above. Each theorem's features and dependencies
 (with `-P`, its typed symbols and frequency-only tokens) are stored once per
 version, and each view has what its method learns from the view's theorems:
@@ -455,7 +467,8 @@ weighs `0.62 ^ log2(r + 1)`, divided by the mean weight of the ranking's
 first `M` theorems. The candidates are the first `M` theorems of each input.
 A candidate scores the sum, over the inputs, of the input's weight times the
 candidate's weight in it (0 if the input does not have it). Equal scores are
-ranked in `<seq>` order. Isabelle also divides the sum by the number of
+ranked in `<seq>` order (with `-P`, in the order the inputs, in turn, first
+rank them). Isabelle also divides the sum by the number of
 inputs and rounds it to a multiple of 1e-8, which can only make nearly equal
 scores equal.
 
@@ -467,6 +480,14 @@ scores equal.
   `2M + 25`; `-T 51n/50` cuts both to `51n/50`, rounded down. Each input is
   computed for as many predictions as its cut, so `mash` inside `mesh` fuses
   `nbayes` and `knn` cut to that length.
+
+With `-P`, `mash` fuses `nbayes` and `knn`'s neighbours alone (the order of
+`-p knn -c 0`), each cut to `2M + 25` theorems and fused at that depth, then
+follows each fused theorem at once by its dependencies (unless `-c 0`), each
+theorem at its first place, as `knn` places a neighbour's (HOL4's
+`add_thmdep`), cut to `M`; a theorem scores the fused score of the one that
+placed it. `mesh` fuses `mepo` and that `mash`, each cut to `M`
+(`-T 51n/50`: both to `51n/50`).
 
 `M` and `n` are both the number of predictions asked for with `-n`
 (`no_adv` in `mesh.cpp`).
@@ -506,6 +527,8 @@ scores equal.
   `!view`, `!drop`, `view=`).
 - A `-p mesh` process also ranks a query with its `knn`, `mash` or `mepo`
   (`method=`).
+- With `-P`, `knn`, `mash` and `mesh` keep typed symbols apart from features,
+  and `mash` places dependencies after it fuses.
 
 ## Provenance and licence
 

@@ -42,11 +42,11 @@ class MePoRanking {
 
     template <class Facts>
     void learn(const Facts& facts, long from, long to);
-    // Untyped: unlearns facts [from, size()), as Predictor::forget.
+    // Unlearns facts [from, size()), as Predictor::forget.
     template <class Facts>
     void forget(const Facts& facts, long from);
-    // to [sym_num] untyped features; features dropped have no facts
-    void resize(long sym_num) { freq.resize(sym_num, 0); }
+    // to [sym_num] features; features dropped have no facts
+    void resize(long sym_num);
     // A query feature weighing less than 1 occurs only in the goal's
     // assumptions; one weighing 1 or more occurs in its conclusion.
     template <class Facts>
@@ -89,8 +89,10 @@ class MePoRanking {
     vector<long> freq;
 
     const TypeTable* types;
-    // the learned occurrences of each symbol, by ptype
+    // the learned occurrences of each symbol, by ptype, and the number of
+    // learned tokens (typed or frequency-only) of each symbol
     vector<vector<pair<long, long> > > type_counts;
+    vector<long> tokens;
     // for each typed symbol of each fact, the occurrences of its symbol at
     // a ptype it generalizes, and at a ptype that generalizes it
     vector<vector<pair<long, long> > > typed_freq;
@@ -107,7 +109,6 @@ class MePo : public Predictor {
       const TypedSyms* freq_only = nullptr);
 
     void learn(long from, long to);
-    // untyped only
     bool forget(long from);
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     // as MePoRanking's
@@ -115,6 +116,9 @@ class MePo : public Predictor {
       long no_adv) const;
     LDPairVec predict_typed(const vector<TypedSym>& query, long maxth,
       long no_adv) const;
+    // typed: ranks [typed]; untyped: [query]
+    LDPairVec predict_split(const LDPairVec& query,
+      const vector<TypedSym>& typed, long maxth, long no_adv) const;
 
   private:
     // the theorems of the process, as MePoRanking takes them
@@ -166,7 +170,15 @@ namespace mepo_fudge {
 }
 
 MePoRanking::MePoRanking(long sym_num, const TypeTable* types)
-: freq(sym_num, 0), types(types), type_counts(types ? sym_num : 0) {}
+: freq(sym_num, 0), types(types), type_counts(types ? sym_num : 0),
+  tokens(types ? sym_num : 0, 0) {}
+
+void MePoRanking::resize(long sym_num) {
+  freq.resize(sym_num, 0);
+  if (!types) return;
+  type_counts.resize(sym_num);
+  tokens.resize(sym_num, 0);
+}
 
 MePo::MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
   long sym_num, const vector<unsigned char>& statures,
@@ -180,7 +192,6 @@ void MePo::learn(long from, long to) {
 }
 
 bool MePo::forget(long from) {
-  if (typed) return false;
   ranking.forget(Facts{*this}, from);
   return true;
 }
@@ -201,11 +212,28 @@ LDPairVec MePo::predict_typed(const vector<TypedSym>& query, long maxth,
   return ranking.predict_typed(Facts{*this}, query, maxth, no_adv);
 }
 
+LDPairVec MePo::predict_split(const LDPairVec& query,
+  const vector<TypedSym>& typed_query, long maxth, long no_adv) const {
+  return typed ? predict_typed(typed_query, maxth, no_adv)
+    : predict_weighted(query, maxth, no_adv);
+}
+
 template <class Facts>
 void MePoRanking::forget(const Facts& facts, long from) {
   for (long i = from; i < facts.size(); ++i)
     for (const auto s : facts.syms(i))
       --freq[s];
+  if (!types) return;
+  // a ptype's occurrences may drop to 0, which counts as none in every sum
+  auto uncount = [&](const TypedSym& ts) {
+    for (auto& c : type_counts[ts.sym])
+      if (c.first == ts.ptype) c.second -= ts.count;
+    --tokens[ts.sym];
+  };
+  for (long i = from; i < facts.size(); ++i) {
+    for (const auto& ts : facts.typed(i)) uncount(ts);
+    for (const auto& ts : facts.freq_only(i)) uncount(ts);
+  }
 }
 
 template <class Facts>
@@ -224,6 +252,7 @@ void MePoRanking::learn(const Facts& facts, long from, long to) {
       [&](const pair<long, long>& c) { return c.first == ts.ptype; });
     if (same == counts.end()) counts.push_back(make_pair(ts.ptype, ts.count));
     else same->second += ts.count;
+    ++tokens[ts.sym];
   };
   for (long i = from; i < to; ++i) {
     for (const auto& ts : facts.typed(i)) count(ts);
@@ -418,8 +447,9 @@ LDPairVec MePoRanking::predict_typed(const Facts& facts,
   bool concl = false, any = false;
   for (const auto& q : query) {
     // a symbol no learned fact has, not even frequency-only (all its facts
-    // were replaced), is unknown, as to a predict started on these facts
-    if (type_counts[q.sym].empty()) continue;
+    // were replaced or unlearned), is unknown, as to a predict started on
+    // these facts
+    if (tokens[q.sym] == 0) continue;
     any = true;
     if (q.weight < 1) add(chained[q.sym], q.ptype);
     else {

@@ -53,11 +53,13 @@ const string usage_str =
   "               (default 20; 0 for all)\n"
   " MePo (also in MeSh):\n"
   "  -F <file>    file giving the statures (simp, local) of theorems\n"
-  "  -P           (mepo only, with queries) match symbols by their types\n"
+  "  -P           (with queries) match symbols by their types; with knn, mash\n"
+  "               and mesh, typed symbols are MePo's and the others knn's and\n"
+  "               naive Bayes's, and MaSh places dependencies after it fuses\n"
   " MeSh:\n"
   "  -T <cut>     how MeSh cuts its inputs for M predictions: 2M+25 (default)\n"
-  "               cuts MePo to M and MaSh to 2M+25 theorems, 51n/50 cuts both\n"
-  "               to 51M/50\n"
+  "               cuts MePo to M and MaSh to 2M+25 theorems (with -P, both to\n"
+  "               M), 51n/50 cuts both to 51M/50\n"
   " Random Forest:\n"
   "  -t <n>       number of trees to build\n"
   "  -s <n>       number of samples to consider per tree\n"
@@ -145,9 +147,10 @@ void add_theorems(Session& s, const vector<string>& files) {
     c.typed.resize(n);
     c.freq_only.resize(n);
   }
+  if (c.split) c.split->syms.resize(n);
   long sym_num = c.no_sym.size();
   read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym,
-    c.types, &c.typed, &c.freq_only, old_n);
+    c.types, &c.typed, &c.freq_only, old_n, c.split);
   read_theories(theoriesf, c.th_no, s.theories);
 }
 
@@ -165,6 +168,9 @@ void store_version(Session& s, const string& args, const string& line) {
   if (s.views.versions.count(key))
     exit_error("Version `" + id + "' of `" + theory + "' is already stored "
                "in `" + line + "'!");
+  if (s.corpus.split)
+    exit_error("Versions and views work with -P only for -p mepo, in `" +
+               line + "'!");
   Version v = read_version(s.views, theory, paths, s.corpus.types);
   v.serial = s.views.serial++;
   s.views.versions.emplace(key, move(v));
@@ -178,6 +184,9 @@ void set_view(Session& s, const string& args, const string& line) {
   string name, file, rest;
   if (!(in >> name >> file) || (in >> rest) || !valid_theory(name))
     exit_error("Expected `!view <view> <file>', not `" + line + "'!");
+  if (s.corpus.split)
+    exit_error("Versions and views work with -P only for -p mepo, in `" +
+               line + "'!");
   check_readable(file, line);
   ifstream ic(file);
   if (!ic)
@@ -392,7 +401,17 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
     p->set_scope(scoped ? &in_scope : nullptr);
 
     LDPairVec ans;
-    if (s.corpus.types)
+    if (s.corpus.split) {
+      LDPairVec query;
+      vector<TypedSym> typed;
+      parse_split_query(line.begin() + start, line.end(), s.corpus.sym_no,
+        *s.corpus.split, *s.corpus.types, query, typed);
+      query.erase(remove_if(query.begin(), query.end(),
+        [&](const pair<long, double>& f) {
+          return s.corpus.sym_ths[f.first].empty(); }), query.end());
+      ans = ranker.predict_split(query, typed, n, no_adv);
+    }
+    else if (s.corpus.types)
       ans = static_cast<const MePo&>(ranker).predict_typed(
         parse_typed_query(line.begin() + start, line.end(), s.corpus.sym_no,
           *s.corpus.types), n, no_adv);
@@ -606,12 +625,18 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-  if (typed_mepo && (method != "mepo" || !evalf.empty())) {
-    cerr << "Error: -P works only with -p mepo, and not with -e!\n";
+  // with -P, typed symbols are kept apart from the features of knn and
+  // naive Bayes, which -p mepo does not have
+  const bool split = typed_mepo && method != "mepo";
+  if (typed_mepo && ((method != "mepo" && method != "knn" &&
+      method != "mash" && method != "mesh") || !evalf.empty())) {
+    cerr << "Error: -P works only with -p mepo, knn, mash or mesh, and not "
+            "with -e!\n";
     return EXIT_FAILURE;
   }
-  if (typed_mepo && !(snapshot_in.empty() && snapshot_out.empty())) {
-    cerr << "Error: -P does not work with snapshots!\n";
+  if (typed_mepo && !split &&
+      !(snapshot_in.empty() && snapshot_out.empty())) {
+    cerr << "Error: -p mepo -P does not work with snapshots!\n";
     return EXIT_FAILURE;
   }
   // exported trees name their features, which a snapshot does not hold
@@ -630,9 +655,11 @@ int main(int argc, char* argv[]) {
           sym_ths;       // sym_ths[s] holds the theorems which contain s
   TypeTable types;
   TypedSyms typed, freq_only;
+  TypedTable typed_table;
 
   Corpus corpus{no_th, no_sym, th_no, sym_no, deps, syms, sym_ths,
-    typed_mepo ? &types : nullptr, typed, freq_only};
+    typed_mepo ? &types : nullptr, typed, freq_only,
+    split ? &typed_table : nullptr};
   if (!snapshot_in.empty()) {
     const string why = read_snapshot(snapshot_in, version_str, corpus);
     if (!why.empty()) {
@@ -654,8 +681,10 @@ int main(int argc, char* argv[]) {
     typed.resize(no_th.size());
     freq_only.resize(no_th.size());
   }
+  if (split) typed_table.syms.resize(no_th.size());
   read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
-    corpus.types, &typed, &freq_only);
+    corpus.types, &typed, &freq_only, 0,
+    corpus.split);
 
   if (!snapshot_out.empty()) {
     write_snapshot(snapshot_out, version_str, corpus);
@@ -694,10 +723,10 @@ int main(int argc, char* argv[]) {
         method == "cosine-dense"));
     else if (method == "mash")
       p.reset(new MaSh(deps, syms, sym_ths, sym_num, max_deps,
-        credit_deps));
+        credit_deps, split));
     else if (method == "mesh")
       p.reset(new MeSh(deps, syms, sym_ths, sym_num, statures, max_deps,
-        credit_deps, over));
+        credit_deps, over, corpus.split, corpus.types, &typed, &freq_only));
     else if (method == "rforest")
       p.reset(new RandomForest(deps, syms, sym_ths, sym_num,
         n_trees, n_samples, n_features, depweight));

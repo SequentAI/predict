@@ -228,6 +228,7 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
       corpus.typed[to[i]] = corpus.typed[i];
       corpus.freq_only[to[i]] = corpus.freq_only[i];
     }
+    if (corpus.split) corpus.split->syms[to[i]] = corpus.split->syms[i];
     statures[to[i]] = statures[i];
     theories.of[to[i]] = theories.of[i];
     theories.priv[to[i]] = theories.priv[i];
@@ -239,6 +240,7 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
     corpus.typed.resize(m);
     corpus.freq_only.resize(m);
   }
+  if (corpus.split) corpus.split->syms.resize(m);
   statures.resize(m);
   theories.of.resize(m);
   theories.priv.resize(m);
@@ -250,12 +252,15 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
   };
   for (auto& ds : corpus.deps) renumber(ds);
   for (auto& ths : corpus.sym_ths) renumber(ths);
+  if (corpus.split)
+    for (auto& ths : corpus.split->sym_ths) renumber(ths);
   corpus.th_no.clear();
   for (long i = 0; i < m; ++i) corpus.th_no[corpus.no_th[i]] = i;
 }
 
 /* The first theorem of theory [t] (-1 for none), or the number of theorems
-   if it has none, if the corpus is untyped, its theorems are the last ones,
+   if it has none, if the corpus is untyped or keeps its typed symbols apart
+   (whose numbers MePo's ranking does not depend on), its theorems are the last ones,
    no other theorem depends on one of them, and the features beyond the first
    [kept_syms] that its theorems were the first to have come after all the
    others and belong to no other theorem, so that removing them leaves the
@@ -264,7 +269,7 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
 long last_theory_start(const Corpus& corpus, const Theories& theories,
                        long t, long kept_syms) {
   long from = theories.of.size();
-  if (corpus.types) return -1;
+  if (corpus.types && !corpus.split) return -1;
   if (t == -1) return from;
   while (from > 0 && theories.of[from - 1] == t) --from;
   for (long i = 0; i < from; ++i) {
@@ -286,9 +291,9 @@ long last_theory_start(const Corpus& corpus, const Theories& theories,
   return from;
 }
 
-/* Removes the theorems [from, n) from the untyped [corpus], [statures] and
-   [theories], as last_theory_start allows, then the features at the end
-   that no theorem has, down to [kept_syms] features. */
+/* Removes the theorems [from, n) from [corpus], [statures] and [theories],
+   as last_theory_start allows, then the untyped features at the end that no
+   theorem has, down to [kept_syms] features. Typed symbols stay numbered. */
 void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
                       Theories& theories, long from, long kept_syms) {
   const long n = corpus.no_th.size();
@@ -306,6 +311,17 @@ void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
     LVec& ths = corpus.sym_ths[s];
     ths.erase(remove_if(ths.begin(), ths.end(),
       [&](long i) { return i >= from; }), ths.end());
+  }
+  if (corpus.split) {
+    for (long i = from; i < n; ++i)
+      for (const auto s : corpus.split->syms[i]) {
+        LVec& ths = corpus.split->sym_ths[s];
+        ths.erase(remove_if(ths.begin(), ths.end(),
+          [&](long j) { return j >= from; }), ths.end());
+      }
+    corpus.split->syms.resize(from);
+    corpus.typed.resize(from);
+    corpus.freq_only.resize(from);
   }
   corpus.no_th.resize(from);
   corpus.deps.resize(from);

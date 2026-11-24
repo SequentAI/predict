@@ -42,15 +42,22 @@ LVec first_ids(const Predictor& p, const LDPairVec& query, long maxth,
 // weight of the leg's first max_facts theorems; a candidate scores the sum,
 // over the legs it is in, of its weight times the leg's. Isabelle averages
 // the sum over the legs and rounds it to a multiple of 1e-8, which can only
-// make nearly equal scores equal; here, equal scores come in <seq> order.
+// make nearly equal scores equal; here, equal scores come in <seq> order, or,
+// sorted by sort_fused with [first], in the order the legs first rank them.
 // Unsorted: the caller drops the theorems out of scope, then sorts.
-LDPairVec mesh_facts(const vector<Leg>& legs, long maxth, long max_facts) {
+LDPairVec mesh_facts(const vector<Leg>& legs, long maxth, long max_facts,
+  vector<long>* first = nullptr) {
   LDPairVec ans(maxth);
   for (long i = 0; i < maxth; ++i) ans[i] = make_pair(i, 0.0);
   vector<char> candidate(maxth, 0);
+  if (first) first->assign(maxth, maxth);
+  long seen = 0;
   for (const auto& leg : legs) {
     const long n = leg.ranking.size();
     const long head = min(n, max_facts);
+    if (first)
+      for (const auto i : leg.ranking)
+        if ((*first)[i] == maxth) (*first)[i] = seen++;
     if (head == 0) continue;
     double mean = 0;
     for (long r = 0; r < head; ++r) mean += steep_weight(r) / head;
@@ -66,12 +73,28 @@ LDPairVec mesh_facts(const vector<Leg>& legs, long maxth, long max_facts) {
   return ans;
 }
 
+// Sorts the first n of [ans] as sort_prediction does, but equal scores in
+// the order [first] gives (mesh_facts), then in <seq> order.
+void sort_fused(LDPairVec& ans, const vector<long>& first, long n) {
+  partial_sort(ans.begin(), ans.begin() + n, ans.end(),
+    [&](const pair<long, double>& a, const pair<long, double>& b) {
+      if (a.second != b.second) return a.second > b.second;
+      if (first[a.first] != first[b.first])
+        return first[a.first] < first[b.first];
+      return a.first < b.first;
+    });
+}
+
 // knn and naive Bayes, each cut to the first no_adv theorems, weighted 0.5
-// each (MaSh_NB_kNN in Isabelle's query_internal)
+// each (MaSh_NB_kNN in Isabelle's query_internal). With [deps_after] (-P),
+// MaSh fuses naive Bayes and knn's neighbours alone instead, each cut to
+// 2 no_adv + 25 and fused at that depth, then follows each theorem at once by
+// its dependencies (with [credit_deps]), each theorem at its first place, as
+// knn places a neighbour's (HOL4's add_thmdep), cut to no_adv.
 class MaSh : public Predictor {
   public:
     MaSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-      long sym_num, long max_deps, bool credit_deps);
+      long sym_num, long max_deps, bool credit_deps, bool deps_after = false);
 
     void learn(long from, long to);
     bool forget(long from) { return knn.forget(from) && nbayes.forget(from); }
@@ -84,15 +107,21 @@ class MaSh : public Predictor {
     const Predictor& knn_part() const { return knn; }
 
   private:
+    // the -P ranking (deps_after)
+    LDPairVec predict_deps_after(const LDPairVec& query, long maxth,
+      long no_adv) const;
+
     kNN knn;
     NaiveBayes nbayes;
+    bool credit_deps, deps_after;
 };
 
 MaSh::MaSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-  long sym_num, long max_deps, bool credit_deps)
+  long sym_num, long max_deps, bool credit_deps, bool deps_after)
 : Predictor(deps, syms, sym_ths, sym_num),
   knn(deps, syms, sym_ths, sym_num, credit_deps),
-  nbayes(deps, syms, sym_ths, sym_num, max_deps, false) {}
+  nbayes(deps, syms, sym_ths, sym_num, max_deps, false),
+  credit_deps(credit_deps), deps_after(deps_after) {}
 
 void MaSh::learn(long from, long to) {
   knn.learn(from, to);
@@ -113,6 +142,7 @@ LDPairVec MaSh::predict(const LVec& csyms, long maxth, long no_adv) const {
 
 LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
   long no_adv) const {
+  if (deps_after) return predict_deps_after(query, maxth, no_adv);
   const long n = min(no_adv, maxth);
   LDPairVec ans = mesh_facts(
     {{0.5, first_ids(nbayes, query, maxth, no_adv)},
@@ -120,6 +150,20 @@ LDPairVec MaSh::predict_weighted(const LDPairVec& query, long maxth,
     no_adv);
   sort_prediction(ans, keep_visible(ans, no_adv));
   return ans;
+}
+
+LDPairVec MaSh::predict_deps_after(const LDPairVec& query, long maxth,
+  long no_adv) const {
+  const long m = min(2 * no_adv + 25, maxth);
+  vector<long> first;
+  LDPairVec fused = mesh_facts(
+    {{0.5, first_ids(nbayes, query, maxth, m)},
+     {0.5, first_ids(knn.predict_neighbours(query, maxth, m), m)}}, maxth, m,
+    &first);
+  sort_fused(fused, first, keep_visible(fused, maxth));
+  return place_in_order(fused, fused.size(), maxth, no_adv, credit_deps,
+    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return visible(i, maxth); });
 }
 
 // The view's numbers of the first n of p's predictions for query, of the
@@ -176,18 +220,27 @@ LDPairVec mesh_fusion(long maxth, long no_adv, bool over, MePoFirst mepo,
     no_adv);
 }
 
-// mesh_fusion's ranking of the theorems of the process
+// mesh_fusion's ranking of the theorems of the process. With [split] (-P),
+// MePo ranks the typed symbols, numbered in [split], and MaSh, which is then
+// MaSh with deps_after, the features; predict_split fuses them as mesh_fusion
+// does, but with MaSh cut to the same length as MePo (MaSh itself goes
+// 2 no_adv + 25 deep), and equal scores in the order the legs first rank
+// them.
 class MeSh : public Predictor {
   public:
     MeSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
       long sym_num, const vector<unsigned char>& statures, long max_deps,
-      bool credit_deps, bool over);
+      bool credit_deps, bool over, const TypedTable* split = nullptr,
+      const TypeTable* types = nullptr, const TypedSyms* typed = nullptr,
+      const TypedSyms* freq_only = nullptr);
 
     void learn(long from, long to);
     bool forget(long from) { return mepo.forget(from) && mash.forget(from); }
     LDPairVec predict(const LVec& csyms, long maxth, long no_adv) const;
     LDPairVec predict_weighted(const LDPairVec& query, long maxth,
       long no_adv) const;
+    LDPairVec predict_split(const LDPairVec& query,
+      const vector<TypedSym>& typed, long maxth, long no_adv) const;
     void set_scope(const vector<char>* scope);
     // the part [method] names, which ranks as a -p [method] process: knn,
     // mash or mepo; null for another
@@ -201,10 +254,15 @@ class MeSh : public Predictor {
 
 MeSh::MeSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
   long sym_num, const vector<unsigned char>& statures, long max_deps,
-  bool credit_deps, bool over)
+  bool credit_deps, bool over, const TypedTable* split, const TypeTable* types,
+  const TypedSyms* typed, const TypedSyms* freq_only)
 : Predictor(deps, syms, sym_ths, sym_num),
-  mepo(deps, syms, sym_ths, sym_num, statures),
-  mash(deps, syms, sym_ths, sym_num, max_deps, credit_deps), over(over) {}
+  mepo(deps, split ? split->syms : syms, split ? split->sym_ths : sym_ths,
+    split ? (long)split->no_sym.size() : sym_num, statures,
+    split ? types : nullptr, split ? typed : nullptr,
+    split ? freq_only : nullptr),
+  mash(deps, syms, sym_ths, sym_num, max_deps, credit_deps, split != nullptr),
+  over(over) {}
 
 void MeSh::learn(long from, long to) {
   mepo.learn(from, to);
@@ -236,6 +294,17 @@ LDPairVec MeSh::predict_weighted(const LDPairVec& query, long maxth,
     [&](long n) { return first_ids(mepo, query, maxth, n); },
     [&](long n) { return first_ids(mash, query, maxth, n); });
   sort_prediction(ans, keep_visible(ans, no_adv));
+  return ans;
+}
+
+LDPairVec MeSh::predict_split(const LDPairVec& query,
+  const vector<TypedSym>& typed, long maxth, long no_adv) const {
+  const long n = min(over ? no_adv * 51 / 50 : no_adv, maxth);
+  vector<long> first;
+  LDPairVec ans = mesh_facts(
+    {{0.5, first_ids(mepo.predict_split(query, typed, maxth, n), n)},
+     {0.5, first_ids(mash, query, maxth, n)}}, maxth, no_adv, &first);
+  sort_fused(ans, first, keep_visible(ans, no_adv));
   return ans;
 }
 
