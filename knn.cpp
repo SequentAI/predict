@@ -51,6 +51,32 @@ inline double age(long k) {
   return 500000000 - 100 * k;
 }
 
+// The first [k] theorems of [ordered], in order, each followed at once by its
+// dependencies that may be predicted (with [credit_deps]), each theorem at
+// its first place, cut to [no_adv]; a theorem scores the score of the one
+// that placed it. The other arguments are place_deps'.
+template <class DepsOf, class Visible>
+LDPairVec place_in_order(const LDPairVec& ordered, long k, long n,
+  long no_adv, bool credit_deps, DepsOf deps_of, Visible visible) {
+  vector<char> placed(n, 0);
+  LDPairVec ans;
+  const auto place = [&](long i, double score) {
+    if (placed[i]) return;
+    placed[i] = 1;
+    ans.push_back(make_pair(i, score));
+  };
+  for (long j = 0; j < k && (long)ans.size() < no_adv; ++j) {
+    const long nn = ordered[j].first;
+    const double o = ordered[j].second;
+    place(nn, o);
+    if (!credit_deps) continue;
+    for (const auto d : deps_of(nn))
+      if (visible(d)) place(d, o);
+  }
+  ans.resize(min(no_adv, (long)ans.size()));
+  return ans;
+}
+
 // The ranking of -p knn: the neighbours of the query by similarity, each
 // followed at once by its dependencies that may be predicted (with
 // [credit_deps]), each theorem at its first place, cut to [no_adv]. This is
@@ -68,23 +94,8 @@ LDPairVec place_deps(LDPairVec neighbours, long n, long no_adv,
   const long k = min(no_adv, (long)neighbours.size());
   partial_sort(neighbours.begin(), neighbours.begin() + k, neighbours.end(),
     sortfun);
-  vector<char> placed(n, 0);
-  LDPairVec ans;
-  const auto place = [&](long i, double score) {
-    if (placed[i]) return;
-    placed[i] = 1;
-    ans.push_back(make_pair(i, score));
-  };
-  for (long j = 0; j < k && (long)ans.size() < no_adv; ++j) {
-    const long nn = neighbours[j].first;
-    const double o = neighbours[j].second;
-    place(nn, o);
-    if (!credit_deps) continue;
-    for (const auto d : deps_of(nn))
-      if (visible(d)) place(d, o);
-  }
-  ans.resize(min(no_adv, (long)ans.size()));
-  return ans;
+  return place_in_order(neighbours, k, n, no_adv, credit_deps, deps_of,
+    visible);
 }
 
 // The ranking MaSh fuses, Isabelle's MaSh k-NN (k_nearest_neighbors in

@@ -58,8 +58,8 @@ const string usage_str =
   "               naive Bayes's, and MaSh places dependencies after it fuses\n"
   " MeSh:\n"
   "  -T <cut>     how MeSh cuts its inputs for M predictions: 2M+25 (default)\n"
-  "               cuts MePo to M and MaSh to 2M+25 theorems, 51n/50 cuts both\n"
-  "               to 51M/50\n"
+  "               cuts MePo to M and MaSh to 2M+25 theorems (with -P, both to\n"
+  "               M), 51n/50 cuts both to 51M/50\n"
   " Random Forest:\n"
   "  -t <n>       number of trees to build\n"
   "  -s <n>       number of samples to consider per tree\n"
@@ -169,7 +169,8 @@ void store_version(Session& s, const string& args, const string& line) {
     exit_error("Version `" + id + "' of `" + theory + "' is already stored "
                "in `" + line + "'!");
   if (s.corpus.split)
-    exit_error("Versions work with -P only for -p mepo, in `" + line + "'!");
+    exit_error("Versions and views work with -P only for -p mepo, in `" +
+               line + "'!");
   Version v = read_version(s.views, theory, paths, s.corpus.types);
   v.serial = s.views.serial++;
   s.views.versions.emplace(key, move(v));
@@ -183,6 +184,9 @@ void set_view(Session& s, const string& args, const string& line) {
   string name, file, rest;
   if (!(in >> name >> file) || (in >> rest) || !valid_theory(name))
     exit_error("Expected `!view <view> <file>', not `" + line + "'!");
+  if (s.corpus.split)
+    exit_error("Versions and views work with -P only for -p mepo, in `" +
+               line + "'!");
   check_readable(file, line);
   ifstream ic(file);
   if (!ic)

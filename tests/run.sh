@@ -1953,7 +1953,8 @@ done
 if [ -n "$msg" ]; then fail "-P snapshots" "$msg"; else ok "-P snapshots"; fi
 
 # 55. with -P, knn, mash and mesh change their corpus in place with !add and
-# !replace as without types; !version is refused
+# !replace as without types, also unlearning a last theory's typed symbols;
+# !version and !view are refused
 number=55
 msg=
 cqueries=
@@ -1964,12 +1965,31 @@ for m in mesh mash knn; do
   [ -n "$msg" ] && break
   same_as_fresh c "$cqueries" -p $m -P -F "$WORK/tdag.statures"
 done
-if [ -z "$msg" ]; then
-  out=$(run cdag -p mesh -P -n 1 <<<"!version Script v1 $WORK/cnew.syms $WORK/cnew.deps $WORK/cnew.seq $WORK/cnew.thy")
+# Script is cup's last theory, so !replace unlearns it in place: "u" and
+# "u"<v 0> are only Script.s3's, and so are the frequency-only "w" and "x"
+part cdag clast '^(Base|Mid|Other)\.'
+for f in seq syms deps thy; do cat "$WORK/cnew.$f" >> "$WORK/clast.$f"; done
+lqueries=$'"u", "u"<v 0>, "p"<c 1 "k$num">\n"w"<c 1>, "q"<c 1 _>\n"p", "x"<c 1>, "r"<c 2 _ "k$bool">'
+for m in "mesh [method=mepo]" mesh mash knn; do
+  [ -n "$msg" ] && break
+  scope=
+  case $m in *' ['*) scope="[${m#*[}" m=${m%% *} ;; esac
+  q=$(sed "s/^/$scope/" <<<"$lqueries")
+  out=$(note='with !replace of the last theory' checked cup -p $m -P -L "$WORK/cup.thy" -F "$WORK/tdag.statures" -n 20 -S <<<"!replace Script $WORK/cnew.syms $WORK/cnew.deps $WORK/cnew.seq $WORK/cnew.thy
+$q")
+  want="$(wc -l < "$WORK/clast.seq")
+$(checked clast -p $m -P -L "$WORK/clast.thy" -F "$WORK/tdag.statures" -n 20 -S <<<"$q")"
+  [ "$out" = "$want" ] || msg="-p $m -P, !replace of the last theory, '$scope': '$out', not '$want'"
+done
+printf 'Script v1\n' > "$WORK/v1.view"
+for c in "!version Script v1 $WORK/cnew.syms $WORK/cnew.deps $WORK/cnew.seq $WORK/cnew.thy" \
+         "!view v1 $WORK/v1.view"; do
+  [ -n "$msg" ] && break
+  out=$(run cdag -p mesh -P -n 1 <<<"$c")
   status=$?
-  [ $status -ne 0 ] && grep -q "Versions work with -P only for -p mepo" "$WORK/stderr" ||
-    msg="!version: exit status $status, stderr '$(head -1 "$WORK/stderr")'"
-fi
+  [ $status -ne 0 ] && grep -q "Versions and views work with -P only for -p mepo" "$WORK/stderr" ||
+    msg="${c%% *}: exit status $status, stderr '$(head -1 "$WORK/stderr")'"
+done
 if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and !replace"; fi
 
 [ $failures -eq 0 ]

@@ -157,8 +157,8 @@ including the quantifiers it doesn't take as the fact's symbols, so
 `-P`, frequency-only tokens are ignored.
 
 With `-P`, `knn`, `mash` and `mesh` keep the typed symbols apart from the
-features. A token with a type, a `*count` or a `+count`, in `<syms>` or a
-query, is then only a typed symbol, which `mepo` inside `mesh` ranks as
+features. A token with a type (in `<syms>`, also one with a `*count` or a
+`+count`; a query has neither) is then only a typed symbol, which `mepo` inside `mesh` ranks as
 `-p mepo -P` ranks a corpus and query of those tokens alone; any other token
 is only a feature, which `knn` and `nbayes` rank as they do without `-P`.
 So a theorem's lines can hold both the features of `mash` and the typed
@@ -333,7 +333,7 @@ anything changes. Versions have no `-F` flags. As with `!add` and
 `!replace`, the commands work neither with `-x` nor with `-y`.
 
 Every method has views (`mepo` also with `-P`; with `-P`, `knn`, `mash` and
-`mesh` refuse `!version`), each ranking as a fresh
+`mesh` refuse `!version` and `!view`), each ranking as a fresh
 process on the view's theorems, as above. Each theorem's features and dependencies
 (with `-P`, its typed symbols and frequency-only tokens) are stored once per
 version, and each view has what its method learns from the view's theorems:

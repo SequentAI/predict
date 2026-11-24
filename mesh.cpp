@@ -161,23 +161,9 @@ LDPairVec MaSh::predict_deps_after(const LDPairVec& query, long maxth,
      {0.5, first_ids(knn.predict_neighbours(query, maxth, m), m)}}, maxth, m,
     &first);
   sort_fused(fused, first, keep_visible(fused, maxth));
-  // a theorem scores the fused score of the one that placed it
-  vector<char> placed(maxth, 0);
-  LDPairVec ans;
-  const auto place = [&](long i, double score) {
-    if (placed[i]) return;
-    placed[i] = 1;
-    ans.push_back(make_pair(i, score));
-  };
-  for (const auto& f : fused) {
-    if ((long)ans.size() >= no_adv) break;
-    place(f.first, f.second);
-    if (!credit_deps) continue;
-    for (const auto d : deps[f.first])
-      if (visible(d, maxth)) place(d, f.second);
-  }
-  ans.resize(min(no_adv, (long)ans.size()));
-  return ans;
+  return place_in_order(fused, fused.size(), maxth, no_adv, credit_deps,
+    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return visible(i, maxth); });
 }
 
 // The view's numbers of the first n of p's predictions for query, of the

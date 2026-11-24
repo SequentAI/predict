@@ -196,9 +196,11 @@ class SnapshotReader {
       }
       return true;
     }
-    // Reads [tss]' lists of typed symbols, clearing [in_range] if one's
-    // symbol is not below [syms] or its (order, patterns) not below [ptypes].
-    bool typed(TypedSyms &tss, uint64_t syms, uint64_t ptypes,
+    // Reads [tss]' lists of typed symbols, clearing [in_range] if one is not
+    // as read_syms reads them: its symbol below [syms], its (order,
+    // patterns) below [ptypes], its kind c, v, a or t, and its count at most
+    // max_count and at least 1 ([freq_only], or kinds c and v).
+    bool typed(TypedSyms &tss, uint64_t syms, uint64_t ptypes, bool freq_only,
                bool &in_range) {
       for (auto& ts : tss) {
         uint64_t n;
@@ -208,9 +210,11 @@ class SnapshotReader {
           LVec l;
           bool ok = true;
           if (!list(l, UINT64_MAX, ok) || l.size() != 4) return false;
+          const bool zero_ok = !freq_only && (l[2] == 'a' || l[2] == 't');
           in_range = in_range && l[0] >= 0 && l[0] < (long)syms &&
-            l[1] >= 0 && l[1] < (long)ptypes && l[2] >= 0 && l[2] < 256 &&
-            l[3] >= 0;
+            l[1] >= 0 && l[1] < (long)ptypes &&
+            (l[2] == 'c' || l[2] == 'v' || l[2] == 'a' || l[2] == 't') &&
+            l[3] >= (zero_ok ? 0 : 1) && l[3] <= max_count;
           t = TypedSym{l[0], l[1], char(l[2]), l[3], 1.0};
         }
       }
@@ -273,6 +277,9 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
       if (!r.str(s)) return "truncated";
     vector<TypeTable::Key> patterns, ptypes;
     if (!r.keys(patterns, 1) || !r.keys(ptypes, 0)) return "truncated";
+    for (const auto& pt : ptypes)
+      if (pt.first < 0 || pt.first > max_count)
+        return "its type table is malformed";
     if (!c.types->restore(ctors, patterns, ptypes))
       return "its type table is malformed";
     TypedTable& t = *c.split;
@@ -287,8 +294,8 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
       if (!r.list(l, c.no_th.size(), in_range)) return "truncated";
     c.typed.resize(c.no_th.size());
     c.freq_only.resize(c.no_th.size());
-    if (!r.typed(c.typed, n, ptypes.size(), in_range) ||
-        !r.typed(c.freq_only, n, ptypes.size(), in_range))
+    if (!r.typed(c.typed, n, ptypes.size(), false, in_range) ||
+        !r.typed(c.freq_only, n, ptypes.size(), true, in_range))
       return "truncated";
   }
   if (r.left() != 0) return "longer than its contents";
