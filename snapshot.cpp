@@ -1,7 +1,9 @@
 #ifndef SNAPSHOT_CPP
 #define SNAPSHOT_CPP
 
+#include <climits>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <string_view>
@@ -209,11 +211,16 @@ void write_snapshot(const string &fname, const string &version,
   for (size_t k = 0; k < h.size(); ++k)
     memcpy(&buf[header + 8 * k], &h[k], 8);
 
-  ofstream out(fname, ios::binary);
+  // A process started on [fname] maps it: write a new file and rename it over
+  // [fname], so that the mapping keeps the old one.
+  const string tmp = fname + ".tmp" + to_string(getpid());
+  ofstream out(tmp, ios::binary);
   out.write(buf.data(), buf.size());
   out.close();
-  if (!out)
+  if (!out || rename(tmp.c_str(), fname.c_str()) != 0) {
+    remove(tmp.c_str());
     exit_error("Cannot write snapshot `" + fname + "'!");
+  }
 }
 
 // Reads the varint parts of a snapshot from a buffer; each method returns
@@ -267,7 +274,8 @@ class SnapshotReader {
       if (!number(n) || left() < n) return false;
       ks.resize(n);
       for (auto& k : ks) {
-        if (!list(k.second, UINT64_MAX, in_range) || k.second.empty())
+        if (!list(k.second, UINT64_MAX, in_range) || k.second.empty() ||
+            k.second[0] < LONG_MIN + shift)
           return false;
         k.first = k.second[0] - shift;
         k.second.erase(k.second.begin());

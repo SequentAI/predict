@@ -69,8 +69,11 @@ is fast next to reading. Its first line is `predict snapshot`. Its tables
 and indexes of the names and hashes) lie in the file as `predict` uses them,
 so `-i` maps the file read-only and uses them where they lie: it starts
 without parsing or copying them, and the operating system shares their pages
-between the processes started on one snapshot. With `-P`, the types and
-each theorem's typed symbols are still read into memory. It can be read only
+between the processes started on one snapshot. `-o` writes a new file and
+renames it over `<snapshot>`, so a process started on the old one keeps it.
+With `-P`, the types and each theorem's typed symbols are still read into
+memory: they are nested lists of varying length, not flat tables, and only
+`-P` processes read them. It can be read only
 by a `predict` built from the commit that wrote it, on a little-endian host.
 If the snapshot was written by another build, is truncated, is not a
 snapshot, or is malformed (a table or index out of bounds, unsorted or

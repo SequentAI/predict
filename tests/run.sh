@@ -1996,7 +1996,8 @@ if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and 
 # not, it ranks as the text, scores included, for every method; so does one
 # started on a snapshot it wrote (-i and -o), and one changing its corpus
 # with !add and !replace, of a theory before others and of the snapshot's
-# own last theory. The snapshot starts with the magic line callers look for;
+# own last theory. Writing a snapshot over one makes a new file. The
+# snapshot starts with the magic line callers look for;
 # a corrupt one is refused with exit status 3; and a process started on a
 # large one holds little of it in its own memory.
 number=56
@@ -2006,6 +2007,14 @@ cmp -s <(head -c 17 "$WORK/lists.snap") <(printf 'predict snapshot\n') ||
   msg="lists.snap does not start with the magic line"
 run rest -i "$WORK/head.snap" -o "$WORK/both.snap" 2>/dev/null ||
   msg="-i and -o: exit status $?"
+# writing a snapshot over another makes a new file, leaving the old one to
+# the processes mapping it
+cp "$WORK/both.snap" "$WORK/again.snap"
+inode=$(stat -c %i "$WORK/again.snap")
+run rest -i "$WORK/head.snap" -o "$WORK/again.snap" 2>/dev/null &&
+  [ "$(stat -c %i "$WORK/again.snap")" != "$inode" ] &&
+  cmp -s "$WORK/both.snap" "$WORK/again.snap" ||
+  msg="-o over a snapshot rewrote its file in place"
 # synth without the dependencies of its first 4000 theorems on later ones,
 # which their snapshot drops
 cp "$WORK/synth.seq" "$WORK/cut.seq"
@@ -2081,7 +2090,8 @@ def varint():
         shift += 7
         if not b & 0x80:
             return n
-pos += varint()
+n = varint()
+pos += n
 varint()
 head = (pos + 7) // 8 * 8
 sec = [struct.unpack_from("<2Q", data, head + 32 + 16 * k) for k in range(19)]
