@@ -54,7 +54,8 @@ Reading the text files takes most of `predict`'s start-up time. With
 from that corpus instead, and `<syms>`, `<deps>` and `<seq>` hold theorems to
 add after it (empty files add none): every method then ranks as it would
 from the text files the snapshot was written from, followed by the added
-theorems' lines. The one exception is a dependency of a snapshot's theorem
+theorems' lines, though the naive Bayes scores `-S` prints for `nbayes` may
+differ in their last digits (below). The one exception is a dependency of a snapshot's theorem
 on a theorem added after it, which the snapshot dropped when it was written,
 as `<deps>` drops one missing from `<seq>`. `-i` and `-o` together write the
 corpus with the added theorems to a new snapshot. With `-P`, they work for
@@ -63,18 +64,24 @@ symbols ("Typed symbols" below) and their types, and is read only with `-P`,
 as one written without `-P` is read only without it.
 
 A snapshot holds the theorem names, the features' hashes (below) and the
-numbers `predict` gives theorems and features, and nothing learned: learning
-is fast next to reading. Its first line is `predict snapshot`. Its tables
-(each theorem's name, dependencies and features, each feature's theorems,
-and indexes of the names and hashes) lie in the file as `predict` uses them,
-so `-i` maps the file read-only and uses them where they lie: it starts
+numbers `predict` gives theorems and features, and what naive Bayes
+(`nbayes`, and in `mash` and `mesh`) learns of them with the `-d` given with
+`-o`: each theorem's feature counts and its part of the score that no query
+changes. Its first line is `predict snapshot`. Its tables (each theorem's
+name, dependencies and features, each feature's theorems, and indexes of the
+names and hashes, and naive Bayes's counts) lie in the file as `predict` uses
+them, so `-i` maps the file read-only and uses them where they lie: it starts
 without parsing or copying them, and the operating system shares their pages
-between the processes started on one snapshot. `-o` writes a new file and
-renames it over `<snapshot>`, so a process started on the old one keeps it.
-With `-P`, the types and each theorem's typed symbols are still read into
-memory: they are nested lists of varying length, not flat tables, and only
-`-P` processes read them. It can be read only
-by a `predict` built from the commit that wrote it, on a little-endian host.
+between the processes started on one snapshot. Naive Bayes then learns only
+the theorems added after the snapshot, and those of the snapshot's theorems
+they use as dependencies (with the same `-d`; with another, it learns them
+all). Its scores then add up the same terms in another order, so they may
+differ in their last digits from those of a process started on text; the
+rankings do not. `-o` writes a new file and renames it over `<snapshot>`, so
+a process started on the old one keeps it. With `-P`, the types and each
+theorem's typed symbols are still read into memory: they are nested lists of
+varying length, not flat tables, and only `-P` processes read them. It can be
+read only by a `predict` built from the commit that wrote it, on a little-endian host.
 If the snapshot was written by another build, is truncated, is not a
 snapshot, or is malformed (a table or index out of bounds, unsorted or
 holding a number out of range, which `predict` checks of every table before

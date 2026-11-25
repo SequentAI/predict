@@ -2,6 +2,7 @@
 #define SNAPSHOT_CPP
 
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -22,7 +23,8 @@
 // Layout: the magic line; the version (a string) and 1 if it keeps typed
 // symbols apart (-P with knn, mash or mesh) else 0, each a number; zeros up
 // to a multiple of 8 bytes; then the header, of 8-byte numbers: the format
-// (2), the numbers of theorems, features and typed symbols, and the offset
+// (3), the numbers of theorems, features and typed symbols, the -d naive Bayes
+// learned its counts with (LearnedCounts), and the offset
 // and length in bytes of each section (Section, in order; offset 0 for an
 // empty one). Each section starts at a multiple of 4096 bytes, and the file
 // ends with the last. A table of rows is two sections: the 8-byte offset of
@@ -31,9 +33,13 @@
 // texts), the theorem numbers in increasing order of name, the feature hashes
 // in increasing order and each one's number, and the tables of each theorem's
 // dependencies and features (in the order <syms> gives them), each theorem's
-// features in increasing order (sharing the offsets of the former), and each
-// feature's theorems. With typed symbols, then the typed symbols' hashes and
-// numbers and their tables as the features', and the type table and each
+// features in increasing order (sharing the offsets of the former), each
+// feature's theorems, and naive Bayes' counts: each theorem's users (a table),
+// each feature's (theorem, count) pairs (the 8-byte offset of each feature's
+// first byte, then the number of bytes, and the pairs as LearnedCounts holds
+// them), and each theorem's two 8-byte doubles. With typed symbols, then the
+// typed symbols' hashes and numbers and their tables as the features', and
+// the type table and each
 // theorem's typed symbols and frequency-only occurrences: the constructor
 // names (a list of strings), its patterns and its (order, patterns) pairs
 // (each their number, then each a list: the constructor's number plus 1, or 0
@@ -47,13 +53,14 @@
 // from the previous one (from 0 for the first), zigzag-encoded.
 
 const string snapshot_magic = "predict snapshot\n";
-const uint64_t snapshot_format = 2;
+const uint64_t snapshot_format = 3;
 const uint64_t snapshot_page = 4096;
 
 enum Section {
   NAME_OFFSETS, NAMES, NAME_ORDER, FEATURE_HASHES, FEATURE_IDS,
   DEPS_OFFSETS, DEPS, SYMS_OFFSETS, SYMS, SORTED_SYMS, SYM_THS_OFFSETS,
-  SYM_THS, TYPED_HASHES, TYPED_IDS, TYPED_SYMS_OFFSETS, TYPED_SYMS,
+  SYM_THS, USERS_OFFSETS, USERS, POSTINGS_OFFSETS, POSTINGS, BASES,
+  TYPED_HASHES, TYPED_IDS, TYPED_SYMS_OFFSETS, TYPED_SYMS,
   TYPED_THS_OFFSETS, TYPED_THS, TYPES, SECTIONS
 };
 
@@ -64,7 +71,8 @@ enum Section {
 // only with [split]; -P without it does not work with snapshots.
 // [sorted_syms] holds the rows of [syms] sorted, for some first theorems:
 // those of the snapshot the process started on, while they are unchanged
-// (Cosine reads it); none without one.
+// (Cosine reads it); none without one. [counts] holds what naive Bayes learned
+// of those theorems, while they and their dependencies are unchanged.
 struct Corpus {
   Names &names;
   Features &features;
@@ -72,6 +80,7 @@ struct Corpus {
   TypeTable *types;
   TypedSyms &typed, &freq_only;
   TypedTable *split;
+  LearnedCounts &counts;
 };
 
 bool little_endian() {
@@ -145,12 +154,12 @@ void put_features(const Features &f, string &hashes, string &ids) {
   }
 }
 
-// Writes [c] to [fname] as a snapshot of predict [version].
+// Writes [c] to [fname] as a snapshot of predict [version], with naive Bayes'
+// sections [s] (NaiveBayes::put_counts, learned with -d [max_deps]).
 void write_snapshot(const string &fname, const string &version,
-  const Corpus &c) {
+  const Corpus &c, long max_deps, vector<string> s) {
   if (!little_endian())
     exit_error("Cannot write snapshot `" + fname + "' on a big-endian host!");
-  vector<string> s(SECTIONS);
   const long n = c.names.size();
   vector<int32_t> order(n);
   for (long i = 0; i < n; ++i) order[i] = i;
@@ -193,9 +202,9 @@ void write_snapshot(const string &fname, const string &version,
   string& buf = w.buf;
   buf.resize((buf.size() + 7) / 8 * 8, '\0');
   const size_t header = buf.size();
-  buf.resize(header + 8 * (4 + 2 * SECTIONS), '\0');
+  buf.resize(header + 8 * (5 + 2 * SECTIONS), '\0');
   vector<uint64_t> h{snapshot_format, uint64_t(n), uint64_t(c.features.size()),
-    uint64_t(c.split ? c.split->features.size() : 0)};
+    uint64_t(c.split ? c.split->features.size() : 0), uint64_t(max_deps)};
   for (const auto& sec : s) {
     if (sec.empty()) {
       h.push_back(0);
@@ -382,10 +391,45 @@ string check_index(const SnapshotSections &s, Section hashes, Section ids,
   return "";
 }
 
+// Checks naive Bayes' postings and bases for [n] theorems and [nsyms]
+// features: each feature's pairs whole varints, of a theorem below n, in
+// increasing order, and a positive count, and two doubles a theorem. Returns
+// why they are malformed, or "".
+string check_counts(const SnapshotSections &s, uint64_t n, uint64_t nsyms) {
+  if (s.bytes(BASES) != 16 * n) return "its section table is malformed";
+  const string why = check_offsets(s, POSTINGS_OFFSETS, nsyms,
+    s.bytes(POSTINGS));
+  if (!why.empty()) return why;
+  const char* malformed = "its naive Bayes counts are malformed";
+  const double* bases = s.at<double>(BASES);
+  for (uint64_t k = 0; k < 2 * n; ++k)
+    if (!isfinite(bases[k])) return malformed;
+  // a count of theorem i is at most its use count 1000 + |users of i|,
+  // which bounds the logarithms naive Bayes looks up
+  const uint64_t* users = s.at<uint64_t>(USERS_OFFSETS);
+  const uint64_t* o = s.at<uint64_t>(POSTINGS_OFFSETS);
+  const char* p = s.at<char>(POSTINGS);
+  for (uint64_t f = 0; f < nsyms; ++f) {
+    SnapshotReader r(string_view(p + o[f], o[f + 1] - o[f]));
+    // the theorems before the next pair's
+    uint64_t before = 0, d, count;
+    while (r.left() > 0) {
+      if (!r.number(d) || !r.number(count) || d >= n - before || count < 1 ||
+          count > 1000 + users[before + d + 1] - users[before + d])
+        return malformed;
+      before += d + 1;
+    }
+  }
+  return "";
+}
+
 // Fills the empty tables of [c] from the snapshot [fname] if predict
-// [version] wrote it, mapping the file for as long as the process runs.
-// Returns why the snapshot cannot be used, or "" once it is read.
-string read_snapshot(const string &fname, const string &version, Corpus &c) {
+// [version] wrote it, mapping the file for as long as the process runs, and
+// with [counts] its naive Bayes counts too (which other methods never read,
+// so they are neither checked nor mapped). Returns why the snapshot cannot be
+// used, or "" once it is read.
+string read_snapshot(const string &fname, const string &version, Corpus &c,
+  bool counts) {
   const int fd = open(fname.c_str(), O_RDONLY);
   if (fd < 0) return "cannot open it";
   struct stat st;
@@ -419,19 +463,19 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
   if (!little_endian()) return "this host is big-endian";
 
   const size_t header = (r.at() + 7) / 8 * 8;
-  if (size < header || size - header < 8 * (4 + 2 * SECTIONS))
+  if (size < header || size - header < 8 * (5 + 2 * SECTIONS))
     return "truncated";
   const uint64_t* h = reinterpret_cast<const uint64_t*>(file + header);
   if (h[0] != snapshot_format)
     return "of format " + to_string(h[0]) + ", not " +
       to_string(snapshot_format);
   // numbers are 4 bytes in the tables
-  const uint64_t n = h[1], nsyms = h[2], ntyped = h[3];
+  const uint64_t n = h[1], nsyms = h[2], ntyped = h[3], max_deps = h[4];
   if (n > INT32_MAX || nsyms > INT32_MAX || ntyped > INT32_MAX ||
-      (!c.split && ntyped != 0))
+      max_deps > uint64_t(LONG_MAX) || (!c.split && ntyped != 0))
     return "its header is malformed";
-  const uint64_t* table = h + 4;
-  uint64_t end = header + 8 * (4 + 2 * SECTIONS);
+  const uint64_t* table = h + 5;
+  uint64_t end = header + 8 * (5 + 2 * SECTIONS);
   for (int k = 0; k < SECTIONS; ++k) {
     const uint64_t off = table[2 * k], len = table[2 * k + 1];
     if (len == 0 && off == 0) continue;
@@ -464,6 +508,8 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
   if (why.empty()) why = check_rows(s, SYM_THS_OFFSETS, SYM_THS, nsyms, n);
   if (why.empty() && s.bytes(SORTED_SYMS) != s.bytes(SYMS))
     why = "its section table is malformed";
+  if (why.empty() && counts) why = check_rows(s, USERS_OFFSETS, USERS, n, n);
+  if (why.empty() && counts) why = check_counts(s, n, nsyms);
   if (!why.empty()) return why;
   const uint64_t* syms_off = s.at<uint64_t>(SYMS_OFFSETS);
   const int32_t* sorted = s.at<int32_t>(SORTED_SYMS);
@@ -472,6 +518,30 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
       if (sorted[k] < 0 || uint64_t(sorted[k]) >= nsyms ||
           (k > syms_off[i] && sorted[k - 1] >= sorted[k]))
         return "its sorted features are malformed";
+  // naive Bayes counts a theorem's features from its SYMS row, so a
+  // repeated one would count above the theorem's use count: the row must
+  // hold the sorted row's features, each once; and it takes a feature's
+  // frequency from its SYM_THS row's length, which must be the number of
+  // theorems having it
+  if (counts) {
+    const int32_t* syms = s.at<int32_t>(SYMS);
+    // the last row each feature was seen in, and in how many rows
+    vector<int32_t> seen(nsyms, -1);
+    vector<uint64_t> rows(nsyms, 0);
+    for (uint64_t i = 0; i < n; ++i)
+      for (uint64_t k = syms_off[i]; k < syms_off[i + 1]; ++k) {
+        if (seen[syms[k]] == int32_t(i) ||
+            !binary_search(sorted + syms_off[i], sorted + syms_off[i + 1],
+              syms[k]))
+          return "its features differ from its sorted features";
+        seen[syms[k]] = i;
+        ++rows[syms[k]];
+      }
+    const uint64_t* ths_off = s.at<uint64_t>(SYM_THS_OFFSETS);
+    for (uint64_t f = 0; f < nsyms; ++f)
+      if (ths_off[f + 1] - ths_off[f] != rows[f])
+        return "its feature frequencies differ from its features";
+  }
   c.features.map(s.at<uint64_t>(FEATURE_HASHES), s.at<int32_t>(FEATURE_IDS),
     nsyms);
   c.deps.map(s.at<uint64_t>(DEPS_OFFSETS), s.at<int32_t>(DEPS), n);
@@ -479,6 +549,17 @@ string read_snapshot(const string &fname, const string &version, Corpus &c) {
   c.sorted_syms.map(syms_off, sorted, n);
   c.sym_ths.map(s.at<uint64_t>(SYM_THS_OFFSETS), s.at<int32_t>(SYM_THS),
     nsyms);
+  if (counts) {
+    LearnedCounts& lc = c.counts;
+    lc.theorems = n;
+    lc.features = nsyms;
+    lc.max_deps = max_deps;
+    lc.users.map(s.at<uint64_t>(USERS_OFFSETS), s.at<int32_t>(USERS), n);
+    lc.post_off = s.at<uint64_t>(POSTINGS_OFFSETS);
+    lc.postings = s.at<unsigned char>(POSTINGS);
+    lc.bases = s.at<double>(BASES);
+    lc.freq_off = s.at<uint64_t>(SYM_THS_OFFSETS);
+  }
 
   if (!c.split) {
     for (int k = TYPED_HASHES; k < SECTIONS; ++k)

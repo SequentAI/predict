@@ -40,6 +40,9 @@ class Tfidf {
       thv = n ? log(n) : 0;
     }
 
+    // ln of the number of theorems
+    double log_theorems() const { return thv; }
+
     // undoes add(syms), leaving what a Tfidf never given them holds
     template <class Syms>
     void remove(const Syms &syms) {

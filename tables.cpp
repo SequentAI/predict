@@ -90,6 +90,17 @@ class Rows {
       else ext[r].push_back(x);
     }
 
+    // removes the last number appended to row r
+    void pop_back(long r) {
+      if (r >= base) {
+        tail[r - base].pop_back();
+        return;
+      }
+      const auto got = ext.find(r);
+      got->second.pop_back();
+      if (got->second.empty()) ext.erase(got);
+    }
+
     // to [n] rows, the new ones empty
     void resize(long n) {
       if (n < base) own();
@@ -280,6 +291,48 @@ inline long find_feature(const unordered_map<uint64_t, long>& index,
   uint64_t h) {
   const auto got = index.find(h);
   return got == index.end() ? -1 : got->second;
+}
+
+// What naive Bayes learned of a snapshot's [theorems] theorems (0 if none)
+// and [features] features, with -d [max_deps], as the snapshot holds it:
+// each theorem's [users] in learn order; each feature f's (theorem, count)
+// pairs in increasing order of theorem, in the bytes [post_off][f] to
+// [post_off][f + 1] of [postings], each the LEB128 varints of its theorem's
+// difference from the previous one's (from -1) minus 1 and its count
+// (for_postings); for each theorem i,
+// [bases][2 i] its B_i and [bases][2 i + 1] the sum over its counts s of
+// 0.2 ln(1 + (1 - s) / t) (NaiveBayes); and each feature's number of
+// theorems, [freq_off][f + 1] - [freq_off][f].
+struct LearnedCounts {
+  long theorems = 0, features = 0, max_deps = 0;
+  Rows users;
+  const uint64_t *post_off = nullptr, *freq_off = nullptr;
+  const unsigned char* postings = nullptr;
+  const double* bases = nullptr;
+};
+
+// Reads the LEB128 varint at [p], moving [p] past it.
+inline uint64_t read_varint(const unsigned char*& p) {
+  uint64_t n = 0;
+  for (int shift = 0; ; shift += 7) {
+    const unsigned char b = *p++;
+    n |= uint64_t(b & 0x7f) << shift;
+    if (!(b & 0x80)) return n;
+  }
+}
+
+// Calls [fn](i, s) for each (theorem i, count s) pair of feature f in [c], in
+// increasing order of i, until it returns false.
+template <class F>
+void for_postings(const LearnedCounts& c, long f, F fn) {
+  const unsigned char* p = c.postings + c.post_off[f];
+  const unsigned char* end = c.postings + c.post_off[f + 1];
+  long i = -1;
+  while (p < end) {
+    i += read_varint(p) + 1;
+    const long s = read_varint(p);
+    if (!fn(i, s)) return;
+  }
 }
 
 #endif

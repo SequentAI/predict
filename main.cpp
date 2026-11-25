@@ -652,12 +652,14 @@ int main(int argc, char* argv[]) {
   TypeTable types;
   TypedSyms typed, freq_only;
   TypedTable typed_table;
+  LearnedCounts counts;  // Corpus::counts
 
   Corpus corpus{names, features, deps, syms, sym_ths, sorted_syms,
     typed_mepo ? &types : nullptr, typed, freq_only,
-    split ? &typed_table : nullptr};
+    split ? &typed_table : nullptr, counts};
   if (!snapshot_in.empty()) {
-    const string why = read_snapshot(snapshot_in, version_str, corpus);
+    const string why = read_snapshot(snapshot_in, version_str, corpus,
+      method == "nbayes" || method == "mash" || method == "mesh");
     if (!why.empty()) {
       cerr << "Error: cannot use snapshot `" << snapshot_in << "': " << why
            << "!\n";
@@ -681,9 +683,16 @@ int main(int argc, char* argv[]) {
     &freq_only, 0, corpus.split);
   // <syms> gave a snapshot's theorem features: its sorted row is stale
   if (syms.extended()) sorted_syms = Rows();
+  // <syms> or <deps> changed a snapshot's theorem: its counts are stale
+  if (syms.extended() || deps.extended()) counts = LearnedCounts();
 
   if (!snapshot_out.empty()) {
-    write_snapshot(snapshot_out, version_str, corpus);
+    NaiveBayes nbayes(deps, syms, sym_ths, features.size(), max_deps, false);
+    nbayes.learn_all();
+    vector<string> sections(SECTIONS);
+    nbayes.put_counts(sections);
+    write_snapshot(snapshot_out, version_str, corpus, max_deps,
+      move(sections));
     return EXIT_SUCCESS;
   }
 
@@ -713,16 +722,17 @@ int main(int argc, char* argv[]) {
       p.reset(new MePoCosine(deps, syms, sym_ths, sym_num));
     else if (method == "nbayes" || method == "nbayes-dense")
       p.reset(new NaiveBayes(deps, syms, sym_ths, sym_num, max_deps,
-        method == "nbayes-dense"));
+        method == "nbayes-dense", &counts));
     else if (method == "cosine" || method == "cosine-dense")
       p.reset(new Cosine(deps, syms, sym_ths, sorted_syms, sym_num,
         method == "cosine-dense"));
     else if (method == "mash")
       p.reset(new MaSh(deps, syms, sym_ths, sym_num, max_deps,
-        credit_deps, split));
+        credit_deps, split, &counts));
     else if (method == "mesh")
       p.reset(new MeSh(deps, syms, sym_ths, sym_num, statures, max_deps,
-        credit_deps, over, corpus.split, corpus.types, &typed, &freq_only));
+        credit_deps, over, corpus.split, corpus.types, &typed, &freq_only,
+        &counts));
     else if (method == "rforest")
       p.reset(new RandomForest(deps, syms, sym_ths, sym_num,
         n_trees, n_samples, n_features, depweight));

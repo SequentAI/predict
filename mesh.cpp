@@ -93,8 +93,10 @@ void sort_fused(LDPairVec& ans, const vector<long>& first, long n) {
 // knn places a neighbour's (HOL4's add_thmdep), cut to no_adv.
 class MaSh : public Predictor {
   public:
+    // [counts] as NaiveBayes's [mapped]
     MaSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
-      long sym_num, long max_deps, bool credit_deps, bool deps_after = false);
+      long sym_num, long max_deps, bool credit_deps, bool deps_after = false,
+      const LearnedCounts* counts = nullptr);
 
     void learn(long from, long to);
     bool forget(long from) { return knn.forget(from) && nbayes.forget(from); }
@@ -117,10 +119,11 @@ class MaSh : public Predictor {
 };
 
 MaSh::MaSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
-  long sym_num, long max_deps, bool credit_deps, bool deps_after)
+  long sym_num, long max_deps, bool credit_deps, bool deps_after,
+  const LearnedCounts* counts)
 : Predictor(deps, syms, sym_ths, sym_num),
   knn(deps, syms, sym_ths, sym_num, credit_deps),
-  nbayes(deps, syms, sym_ths, sym_num, max_deps, false),
+  nbayes(deps, syms, sym_ths, sym_num, max_deps, false, counts),
   credit_deps(credit_deps), deps_after(deps_after) {}
 
 void MaSh::learn(long from, long to) {
@@ -232,7 +235,8 @@ class MeSh : public Predictor {
       long sym_num, const vector<unsigned char>& statures, long max_deps,
       bool credit_deps, bool over, const TypedTable* split = nullptr,
       const TypeTable* types = nullptr, const TypedSyms* typed = nullptr,
-      const TypedSyms* freq_only = nullptr);
+      const TypedSyms* freq_only = nullptr,
+      const LearnedCounts* counts = nullptr);
 
     void learn(long from, long to);
     bool forget(long from) { return mepo.forget(from) && mash.forget(from); }
@@ -255,13 +259,15 @@ class MeSh : public Predictor {
 MeSh::MeSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
   long sym_num, const vector<unsigned char>& statures, long max_deps,
   bool credit_deps, bool over, const TypedTable* split, const TypeTable* types,
-  const TypedSyms* typed, const TypedSyms* freq_only)
+  const TypedSyms* typed, const TypedSyms* freq_only,
+  const LearnedCounts* counts)
 : Predictor(deps, syms, sym_ths, sym_num),
   mepo(deps, split ? split->syms : syms, split ? split->sym_ths : sym_ths,
     split ? split->features.size() : sym_num, statures,
     split ? types : nullptr, split ? typed : nullptr,
     split ? freq_only : nullptr),
-  mash(deps, syms, sym_ths, sym_num, max_deps, credit_deps, split != nullptr),
+  mash(deps, syms, sym_ths, sym_num, max_deps, credit_deps, split != nullptr,
+    counts),
   over(over) {}
 
 void MeSh::learn(long from, long to) {

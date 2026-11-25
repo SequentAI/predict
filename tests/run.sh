@@ -51,6 +51,22 @@ checked() {
   return $status
 }
 
+# same_answers <method> <a> <b>: whether outputs a and b are equal, except
+# that nbayes's scores, both finite, need agree only up to rounding: a
+# process started on a snapshot sums the snapshot's learned scores in another
+# order than one that learned them from text
+same_answers() {
+  case $1 in nbayes) ;; *) [ "$2" = "$3" ]; return ;; esac
+  paste <(tr ' ' '\n' <<<"$2") <(tr ' ' '\n' <<<"$3") | awk -F'\t' '
+    $1 ~ /^\(/ && $2 ~ /^\(/ {
+                 if ($1 !~ /^\(-?[0-9]/ || $2 !~ /^\(-?[0-9]/) { bad = 1; next }
+                 a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
+                 if (d < 0) d = -d; m = b < 0 ? -b : b
+                 if (d > 1e-9 * (m + 1)) bad = 1; next }
+    $1 != $2 { bad = 1 }
+    END { exit bad }'
+}
+
 # corpus <name> <seq> <syms> <deps>: writes a corpus; each argument is the
 # file's contents
 corpus() {
@@ -988,6 +1004,13 @@ if [ -z "$msg" ]; then
   b=$(run rest -i "$WORK/head.snap" -p cosine -n 5000 -S < "$WORK/synth.all")
   [ -n "$a" ] && [ "$a" = "$b" ] || msg="cosine on a snapshot of synth's first 4000 theorems and the rest as text"
 fi
+if [ -z "$msg" ]; then
+  # evaluation points before and after the snapshot's last theorem: before
+  # it, naive Bayes must not take the stored counts of later theorems
+  a=$(run synth -p nbayes -n 100 -S -e "$WORK/synth.eval")
+  b=$(run rest -i "$WORK/head.snap" -p nbayes -n 100 -S -e "$WORK/synth.eval")
+  [ -n "$a" ] && same_answers nbayes "$a" "$b" || msg="nbayes with -e on a snapshot of synth's first 4000 theorems"
+fi
 LIMIT=5
 if [ -n "$msg" ]; then fail "snapshot rankings" "rankings differ: $msg"; else ok "snapshot rankings"; fi
 
@@ -1582,7 +1605,7 @@ if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "fea
 # T, ranks after each `!replace` of its last theory (to fewer theorems, to
 # theorems with other features, to none) and `!add` as a
 # process started on the snapshot and the theorems it then holds after it,
-# scores included, for every method that unlearns (mash is mesh's part);
+# scores included (naive Bayes's up to rounding), for every method that unlearns (mash is mesh's part);
 # so does one whose <syms> gives T's features before those of a theory
 # before it. T depends on the theorems before and
 # on later ones; MePo predicts 50 on the checked build, as in 47.
@@ -1675,7 +1698,7 @@ $t2"
 $qs
 !replace T $(files T2)
 $qs")
-  if [ "$out" != "$want" ]; then
+  if ! same_answers $m "$out" "$want"; then
     msg="$m, started on the first theorems: '$out', not '$want'"
     break
   fi
@@ -1993,7 +2016,8 @@ done
 if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and !replace"; fi
 
 # 56. a process started on a snapshot maps it: with theorems after it or
-# not, it ranks as the text, scores included, for every method; so does one
+# not, it ranks as the text, scores included (naive Bayes's up to
+# rounding), for every method; so does one
 # started on a snapshot it wrote (-i and -o), and one changing its corpus
 # with !add and !replace, of a theory before others and of the snapshot's
 # own last theory. Writing a snapshot over one makes a new file. The
@@ -2032,10 +2056,18 @@ for m in $methods nbayes-dense cosine-dense "rforest -t 8"; do
   b=$(checked rest -i "$WORK/head.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
   c=$(checked none -i "$WORK/both.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
   d=$(checked none -i "$WORK/lists.snap" -p $m -n 16 -S < "$WORK/lists.wqueries")
-  [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] &&
-    [ "$d" = "$(checked lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ] ||
+  [ -n "$a" ] && same_answers "$m" "$a" "$b" && same_answers "$m" "$a" "$c" &&
+    same_answers "$m" "$d" "$(checked lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ||
     msg="$m: the snapshot ranks otherwise than the text"
 done
+# read with another -d than it was written with, naive Bayes relearns its
+# counts from the snapshot's tables rather than use the stored ones, which
+# rank otherwise
+a=$(checked cut -p nbayes -d 1 -n 100 -S < "$WORK/synth.wqueries")
+b=$(checked rest -i "$WORK/head.snap" -p nbayes -d 1 -n 100 -S < "$WORK/synth.wqueries")
+[ -z "$msg" ] && { [ -n "$a" ] && same_answers nbayes "$a" "$b" &&
+  [ "$a" != "$(checked cut -p nbayes -n 100 -S < "$WORK/synth.wqueries")" ] ||
+  msg="nbayes -d 1 on a snapshot of the default -d ranks otherwise than the text"; }
 checked up -o "$WORK/up.snap" </dev/null
 for m in $methods nbayes-dense cosine-dense rforest; do
   [ -n "$msg" ] && break
@@ -2049,13 +2081,13 @@ $queries")
 $(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")
 11
 $(checked kept -L "$WORK/kept.thy" -n 20 -S -p $m <<<"$queries")"
-  [ "$out" = "$want" ] || { msg="$m, !add and !replace: '$out', not '$want'"; break; }
+  same_answers $m "$out" "$want" || { msg="$m, !add and !replace: '$out', not '$want'"; break; }
   # Down, the snapshot's last theory, is replaced in place
   out=$(note='on a snapshot with !replace of its last theory' checked none -i "$WORK/dag.snap" -L "$WORK/dag.thy" -n 20 -S -p $m <<<"!replace Down $(files down)
 $queries")
   want="12
 $(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")"
-  [ "$out" = "$want" ] || msg="$m, !replace of the snapshot's last theory: '$out', not '$want'"
+  same_answers $m "$out" "$want" || msg="$m, !replace of the snapshot's last theory: '$out', not '$want'"
 done
 if [ -z "$msg" ]; then
   # with -P: a snapshot of a snapshot and Down, which is then replaced
@@ -2094,31 +2126,75 @@ n = varint()
 pos += n
 varint()
 head = (pos + 7) // 8 * 8
-sec = [struct.unpack_from("<2Q", data, head + 32 + 16 * k) for k in range(19)]
+sec = [struct.unpack_from("<2Q", data, head + 40 + 16 * k) for k in range(24)]
 NAME_ORDER, SYMS_OFFSETS, SYMS = 2, 7, 8
+SYM_THS_OFFSETS, SYM_THS, POSTINGS, BASES = 10, 11, 15, 16
+def moved_theorem():
+    # a feature's last theorem moved to the next feature's row, both rows
+    # still ascending: two feature frequencies wrong, every table in range
+    m = sec[SYM_THS_OFFSETS][1] // 8
+    off = struct.unpack_from("<%dQ" % m, data, sec[SYM_THS_OFFSETS][0])
+    ths = struct.unpack_from("<%di" % off[-1], data, sec[SYM_THS][0])
+    f = next(f for f in range(m - 2) if off[f + 1] > off[f] and
+             (off[f + 2] == off[f + 1] or ths[off[f + 1] - 1] < ths[off[f + 1]]))
+    put("<Q", sec[SYM_THS_OFFSETS][0] + 8 * (f + 1), off[f + 1] - 1)
 def put(fmt, at, *xs):
     struct.pack_into(fmt, data, at, *xs)
+def huge_count():
+    # the first posting count of two or more bytes, raised to the most
+    # those bytes hold: above any theorem's use count in lists
+    global pos
+    pos = sec[POSTINGS][0]
+    while True:
+        varint()
+        start = pos
+        varint()
+        if pos - start >= 2:
+            data[start:pos] = bytes([0xff] * (pos - start - 1) + [0x7f])
+            return
 exec(sys.argv[3])
 open(sys.argv[2], "wb").write(data)
 PY
 }
-corrupt format 'put("<Q", head, 3)'
-corrupt section 'put("<Q", head + 32 + 16 * SYMS, sec[SYMS][0] + 4096)'
+corrupt format 'put("<Q", head, 2)'
+corrupt section 'put("<Q", head + 40 + 16 * SYMS, sec[SYMS][0] + 4096)'
 corrupt rows 'put("<Q", sec[SYMS_OFFSETS][0] + 8, 1 << 40)'
 corrupt number 'put("<i", sec[SYMS][0], 1 << 30)'
 corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, sec[NAME_ORDER][0])[::-1])'
 corrupt longer 'data.append(0)'
-for c in "format:of format 3" "section:" "rows:offsets are malformed" \
-         "number:out of range" "order:not sorted" "longer:longer than its contents"; do
+corrupt count 'huge_count()'
+corrupt base 'put("<d", sec[BASES][0], float("inf"))'
+corrupt frequency 'moved_theorem()'
+# a theorem's second feature made its first again
+corrupt repeat 'off = struct.unpack_from("<%dQ" % (sec[SYMS_OFFSETS][1] // 8), data, sec[SYMS_OFFSETS][0])
+i = next(i for i in range(len(off) - 1) if off[i + 1] - off[i] >= 2)
+put("<i", sec[SYMS][0] + 4 * (off[i] + 1), *struct.unpack_from("<i", data, sec[SYMS][0] + 4 * off[i]))'
+# the naive Bayes counts only with a method that reads them
+for c in "format:of format 2" "section:" "rows:offsets are malformed" \
+         "number:out of range" "order:not sorted" "longer:longer than its contents" \
+         "count:naive Bayes counts are malformed:nbayes" \
+         "base:naive Bayes counts are malformed:mesh" \
+         "repeat:features differ from its sorted features:nbayes" \
+         "frequency:feature frequencies differ from its features:nbayes"; do
   [ -n "$msg" ] && break
-  snap=${c%%:*} why=${c#*:}
-  out=$(run none -i "$WORK/$snap.snap" -p cosine -n 16 < "$DATA/lists.queries")
+  snap=${c%%:*} why=${c#*:} method=cosine
+  case $why in *:*) method=${why#*:} why=${why%%:*} ;; esac
+  out=$(run none -i "$WORK/$snap.snap" -p $method -n 16 < "$DATA/lists.queries")
   status=$?
   if [ $status -ne 3 ] || [ -n "$out" ] ||
      ! grep -q "^Error: cannot use snapshot.*$why" "$WORK/stderr" ||
      [ "$(wc -l < "$WORK/stderr")" -ne 1 ]; then
     msg="$snap: exit status $status, stderr '$(cat "$WORK/stderr")'"
   fi
+done
+# methods that read no naive Bayes counts start on a snapshot whose counts
+# are corrupt, ranking as on the snapshot itself
+want=$(checked none -i "$WORK/lists.snap" -p cosine -n 16 < "$DATA/lists.queries")
+for snap in count base; do
+  [ -n "$msg" ] && break
+  out=$(checked none -i "$WORK/$snap.snap" -p cosine -n 16 < "$DATA/lists.queries")
+  [ -n "$want" ] && [ "$out" = "$want" ] ||
+    msg="cosine on the snapshot with a corrupt $snap: '$out', not '$want'"
 done
 # private_memory <snapshot>: the anonymous memory in kB of a cosine process
 # started on <snapshot>, once it has learned: its own memory, which the

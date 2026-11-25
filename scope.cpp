@@ -248,6 +248,7 @@ void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
   }
   if (split_syms) split_syms->resize(m);
   corpus.sorted_syms = Rows();
+  corpus.counts = LearnedCounts();
   statures.resize(m);
   theories.of.resize(m);
   theories.priv.resize(m);
@@ -324,6 +325,7 @@ void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
   corpus.deps.resize(from);
   corpus.syms.resize(from);
   if (corpus.sorted_syms.size() > from) corpus.sorted_syms = Rows();
+  if (corpus.counts.theorems > from) corpus.counts = LearnedCounts();
   statures.resize(from);
   theories.of.resize(from);
   theories.priv.resize(from);
