@@ -52,13 +52,15 @@ checked() {
 }
 
 # same_answers <method> <a> <b>: whether outputs a and b are equal, except
-# that naive Bayes's scores need agree only up to rounding: a process started
-# on a snapshot sums the snapshot's learned scores in another order than one
-# that learned them from text
+# that naive Bayes's scores, both finite, need agree only up to rounding: a
+# process started on a snapshot sums the snapshot's learned scores in another
+# order than one that learned them from text
 same_answers() {
   case $1 in nbayes|nbayes-dense) ;; *) [ "$2" = "$3" ]; return ;; esac
   paste <(tr ' ' '\n' <<<"$2") <(tr ' ' '\n' <<<"$3") | awk -F'\t' '
-    $1 ~ /^\(/ && $2 ~ /^\(/ { a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
+    $1 ~ /^\(/ && $2 ~ /^\(/ {
+                 if ($1 !~ /^\(-?[0-9]/ || $2 !~ /^\(-?[0-9]/) { bad = 1; next }
+                 a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
                  if (d < 0) d = -d; m = b < 0 ? -b : b
                  if (d > 1e-9 * (m + 1)) bad = 1; next }
     $1 != $2 { bad = 1 }
@@ -2051,6 +2053,14 @@ for m in $methods nbayes-dense cosine-dense "rforest -t 8"; do
     same_answers "$m" "$d" "$(checked lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ||
     msg="$m: the snapshot ranks otherwise than the text"
 done
+# read with another -d than it was written with, naive Bayes relearns its
+# counts from the snapshot's tables rather than use the stored ones, which
+# rank otherwise
+a=$(checked cut -p nbayes -d 1 -n 100 -S < "$WORK/synth.wqueries")
+b=$(checked rest -i "$WORK/head.snap" -p nbayes -d 1 -n 100 -S < "$WORK/synth.wqueries")
+[ -z "$msg" ] && { [ -n "$a" ] && same_answers nbayes "$a" "$b" &&
+  [ "$a" != "$(checked cut -p nbayes -n 100 -S < "$WORK/synth.wqueries")" ] ||
+  msg="nbayes -d 1 on a snapshot of the default -d ranks otherwise than the text"; }
 checked up -o "$WORK/up.snap" </dev/null
 for m in $methods nbayes-dense cosine-dense rforest; do
   [ -n "$msg" ] && break
@@ -2111,8 +2121,21 @@ varint()
 head = (pos + 7) // 8 * 8
 sec = [struct.unpack_from("<2Q", data, head + 40 + 16 * k) for k in range(24)]
 NAME_ORDER, SYMS_OFFSETS, SYMS = 2, 7, 8
+POSTINGS, BASES = 15, 16
 def put(fmt, at, *xs):
     struct.pack_into(fmt, data, at, *xs)
+def huge_count():
+    # the first posting count of two or more bytes, raised to the most
+    # those bytes hold: above any theorem's use count in lists
+    global pos
+    pos = sec[POSTINGS][0]
+    while True:
+        varint()
+        start = pos
+        varint()
+        if pos - start >= 2:
+            data[start:pos] = bytes([0xff] * (pos - start - 1) + [0x7f])
+            return
 exec(sys.argv[3])
 open(sys.argv[2], "wb").write(data)
 PY
@@ -2123,11 +2146,17 @@ corrupt rows 'put("<Q", sec[SYMS_OFFSETS][0] + 8, 1 << 40)'
 corrupt number 'put("<i", sec[SYMS][0], 1 << 30)'
 corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, sec[NAME_ORDER][0])[::-1])'
 corrupt longer 'data.append(0)'
+corrupt count 'huge_count()'
+corrupt base 'put("<d", sec[BASES][0], float("inf"))'
+# the naive Bayes counts only with a method that reads them
 for c in "format:of format 2" "section:" "rows:offsets are malformed" \
-         "number:out of range" "order:not sorted" "longer:longer than its contents"; do
+         "number:out of range" "order:not sorted" "longer:longer than its contents" \
+         "count:naive Bayes counts are malformed:nbayes" \
+         "base:naive Bayes counts are malformed:mesh"; do
   [ -n "$msg" ] && break
-  snap=${c%%:*} why=${c#*:}
-  out=$(run none -i "$WORK/$snap.snap" -p cosine -n 16 < "$DATA/lists.queries")
+  snap=${c%%:*} why=${c#*:} method=cosine
+  case $why in *:*) method=${why#*:} why=${why%%:*} ;; esac
+  out=$(run none -i "$WORK/$snap.snap" -p $method -n 16 < "$DATA/lists.queries")
   status=$?
   if [ $status -ne 3 ] || [ -n "$out" ] ||
      ! grep -q "^Error: cannot use snapshot.*$why" "$WORK/stderr" ||

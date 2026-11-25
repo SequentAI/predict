@@ -2,6 +2,7 @@
 #define SNAPSHOT_CPP
 
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -399,6 +400,13 @@ string check_counts(const SnapshotSections &s, uint64_t n, uint64_t nsyms) {
   const string why = check_offsets(s, POSTINGS_OFFSETS, nsyms,
     s.bytes(POSTINGS));
   if (!why.empty()) return why;
+  const char* malformed = "its naive Bayes counts are malformed";
+  const double* bases = s.at<double>(BASES);
+  for (uint64_t k = 0; k < 2 * n; ++k)
+    if (!isfinite(bases[k])) return malformed;
+  // a count of theorem i is at most its use count 1000 + |users of i|,
+  // which bounds the logarithms naive Bayes looks up
+  const uint64_t* users = s.at<uint64_t>(USERS_OFFSETS);
   const uint64_t* o = s.at<uint64_t>(POSTINGS_OFFSETS);
   const char* p = s.at<char>(POSTINGS);
   for (uint64_t f = 0; f < nsyms; ++f) {
@@ -406,9 +414,9 @@ string check_counts(const SnapshotSections &s, uint64_t n, uint64_t nsyms) {
     // the theorems before the next pair's
     uint64_t before = 0, d, count;
     while (r.left() > 0) {
-      if (!r.number(d) || !r.number(count) || d >= n - before ||
-          count < 1 || count > INT32_MAX)
-        return "its naive Bayes counts are malformed";
+      if (!r.number(d) || !r.number(count) || d >= n - before || count < 1 ||
+          count > 1000 + users[before + d + 1] - users[before + d])
+        return malformed;
       before += d + 1;
     }
   }
@@ -464,7 +472,7 @@ string read_snapshot(const string &fname, const string &version, Corpus &c,
   // numbers are 4 bytes in the tables
   const uint64_t n = h[1], nsyms = h[2], ntyped = h[3], max_deps = h[4];
   if (n > INT32_MAX || nsyms > INT32_MAX || ntyped > INT32_MAX ||
-      max_deps > INT32_MAX || (!c.split && ntyped != 0))
+      max_deps > uint64_t(LONG_MAX) || (!c.split && ntyped != 0))
     return "its header is malformed";
   const uint64_t* table = h + 5;
   uint64_t end = header + 8 * (5 + 2 * SECTIONS);
