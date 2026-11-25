@@ -31,6 +31,18 @@ class Tfidf {
       thv = log(++thn);
     }
 
+    // as add() leaves it given [n] theorems having [f][s] of each feature s,
+    // from no theorem
+    void start(long n, const vector<long> &f) {
+      freq = f;
+      for (size_t s = 0; s < f.size(); ++s) a[s] = f[s] ? log(f[s]) : 0;
+      thn = n;
+      thv = n ? log(n) : 0;
+    }
+
+    // ln of the number of theorems
+    double log_theorems() const { return thv; }
+
     // undoes add(syms), leaving what a Tfidf never given them holds
     template <class Syms>
     void remove(const Syms &syms) {

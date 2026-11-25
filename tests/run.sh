@@ -51,6 +51,20 @@ checked() {
   return $status
 }
 
+# same_answers <method> <a> <b>: whether outputs a and b are equal, except
+# that naive Bayes's scores need agree only up to rounding: a process started
+# on a snapshot sums the snapshot's learned scores in another order than one
+# that learned them from text
+same_answers() {
+  case $1 in nbayes|nbayes-dense) ;; *) [ "$2" = "$3" ]; return ;; esac
+  paste <(tr ' ' '\n' <<<"$2") <(tr ' ' '\n' <<<"$3") | awk -F'\t' '
+    $1 ~ /^\(/ && $2 ~ /^\(/ { a = substr($1, 2) + 0; b = substr($2, 2) + 0; d = a - b
+                 if (d < 0) d = -d; m = b < 0 ? -b : b
+                 if (d > 1e-9 * (m + 1)) bad = 1; next }
+    $1 != $2 { bad = 1 }
+    END { exit bad }'
+}
+
 # corpus <name> <seq> <syms> <deps>: writes a corpus; each argument is the
 # file's contents
 corpus() {
@@ -1582,7 +1596,7 @@ if [ -n "$msg" ]; then fail "feature repeated across lines" "$msg"; else ok "fea
 # T, ranks after each `!replace` of its last theory (to fewer theorems, to
 # theorems with other features, to none) and `!add` as a
 # process started on the snapshot and the theorems it then holds after it,
-# scores included, for every method that unlearns (mash is mesh's part);
+# scores included (naive Bayes's up to rounding), for every method that unlearns (mash is mesh's part);
 # so does one whose <syms> gives T's features before those of a theory
 # before it. T depends on the theorems before and
 # on later ones; MePo predicts 50 on the checked build, as in 47.
@@ -1661,7 +1675,7 @@ $(from_snap UT1)
 $(from_snap UT2)"
   out=$(note='with !replace of the last theory' checked T1 -i "$WORK/b.snap" -L "$WORK/T1.thy" -p $m -n $n -S <<<"$qs
 $commands")
-  if [ "$out" != "$want" ]; then
+  if ! same_answers $m "$out" "$want"; then
     msg="$m, started on the snapshot and T: '$out', not '$want'"
     break
   fi
@@ -1675,7 +1689,7 @@ $t2"
 $qs
 !replace T $(files T2)
 $qs")
-  if [ "$out" != "$want" ]; then
+  if ! same_answers $m "$out" "$want"; then
     msg="$m, started on the first theorems: '$out', not '$want'"
     break
   fi
@@ -1683,7 +1697,7 @@ $qs")
 $(checked UT2 -i "$WORK/b.snap" -L "$WORK/UT2.thy" -p $m -n $n -S <<<"$uqs")"
   out=$(note='with !replace of a theory given features first' checked UT3 -i "$WORK/b.snap" -L "$WORK/UT3.thy" -p $m -n $n -S <<<"!replace T $(files T2)
 $uqs")
-  if [ "$out" != "$want" ]; then
+  if ! same_answers $m "$out" "$want"; then
     msg="$m, its <syms> giving T's features first: '$out', not '$want'"
     break
   fi
@@ -1993,7 +2007,8 @@ done
 if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and !replace"; fi
 
 # 56. a process started on a snapshot maps it: with theorems after it or
-# not, it ranks as the text, scores included, for every method; so does one
+# not, it ranks as the text, scores included (naive Bayes's up to
+# rounding), for every method; so does one
 # started on a snapshot it wrote (-i and -o), and one changing its corpus
 # with !add and !replace, of a theory before others and of the snapshot's
 # own last theory. The snapshot starts with the magic line callers look for;
@@ -2023,8 +2038,8 @@ for m in $methods nbayes-dense cosine-dense "rforest -t 8"; do
   b=$(run rest -i "$WORK/head.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
   c=$(from_snapshot both -p $m -n 100 -S < "$WORK/synth.wqueries")
   d=$(from_snapshot lists -p $m -n 16 -S < "$WORK/lists.wqueries")
-  [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] &&
-    [ "$d" = "$(run lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ] ||
+  [ -n "$a" ] && same_answers "$m" "$a" "$b" && same_answers "$m" "$a" "$c" &&
+    same_answers "$m" "$d" "$(run lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ||
     msg="$m: the snapshot ranks otherwise than the text"
 done
 checked up -o "$WORK/up.snap" </dev/null
@@ -2040,13 +2055,13 @@ $queries")
 $(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")
 11
 $(checked kept -L "$WORK/kept.thy" -n 20 -S -p $m <<<"$queries")"
-  [ "$out" = "$want" ] || { msg="$m, !add and !replace: '$out', not '$want'"; break; }
+  same_answers $m "$out" "$want" || { msg="$m, !add and !replace: '$out', not '$want'"; break; }
   # Down, the snapshot's last theory, is replaced in place
   out=$(note='on a snapshot with !replace of its last theory' checked none -i "$WORK/dag.snap" -L "$WORK/dag.thy" -n 20 -S -p $m <<<"!replace Down $(files down)
 $queries")
   want="12
 $(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")"
-  [ "$out" = "$want" ] || msg="$m, !replace of the snapshot's last theory: '$out', not '$want'"
+  same_answers $m "$out" "$want" || msg="$m, !replace of the snapshot's last theory: '$out', not '$want'"
 done
 if [ -z "$msg" ]; then
   # with -P: a snapshot of a snapshot and Down, which is then replaced
@@ -2084,7 +2099,7 @@ def varint():
 pos += varint()
 varint()
 head = (pos + 7) // 8 * 8
-sec = [struct.unpack_from("<2Q", data, head + 32 + 16 * k) for k in range(19)]
+sec = [struct.unpack_from("<2Q", data, head + 40 + 16 * k) for k in range(24)]
 NAME_ORDER, SYMS_OFFSETS, SYMS = 2, 7, 8
 def put(fmt, at, *xs):
     struct.pack_into(fmt, data, at, *xs)
@@ -2092,13 +2107,13 @@ exec(sys.argv[3])
 open(sys.argv[2], "wb").write(data)
 PY
 }
-corrupt format 'put("<Q", head, 3)'
-corrupt section 'put("<Q", head + 32 + 16 * SYMS, sec[SYMS][0] + 4096)'
+corrupt format 'put("<Q", head, 2)'
+corrupt section 'put("<Q", head + 40 + 16 * SYMS, sec[SYMS][0] + 4096)'
 corrupt rows 'put("<Q", sec[SYMS_OFFSETS][0] + 8, 1 << 40)'
 corrupt number 'put("<i", sec[SYMS][0], 1 << 30)'
 corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, sec[NAME_ORDER][0])[::-1])'
 corrupt longer 'data.append(0)'
-for c in "format:of format 3" "section:" "rows:offsets are malformed" \
+for c in "format:of format 2" "section:" "rows:offsets are malformed" \
          "number:out of range" "order:not sorted" "longer:longer than its contents"; do
   [ -n "$msg" ] && break
   snap=${c%%:*} why=${c#*:}
