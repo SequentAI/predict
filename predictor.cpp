@@ -10,8 +10,8 @@
 // theorems added or removed at the end, which forget and learn follow.
 class Predictor {
   public:
-    Predictor(const LVecVec& deps, const LVecVec& syms,
-      const LVecVec& sym_ths, long sym_num);
+    Predictor(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+      long sym_num);
     virtual ~Predictor() {}
 
     virtual void learn(long from, long to) = 0;  // learn [from, ..., to)
@@ -37,8 +37,7 @@ class Predictor {
       return predict_weighted(query, maxth, no_adv);
     }
 
-    void set_tables(const SVec& no_th, const SVec& no_sym, const SLMap& th_no,
-      const HLMap& sym_no);
+    void set_tables(const Names& names, const Features& features);
 
     virtual void import_data(string location) {}
     virtual void export_data(string location) const {}
@@ -60,21 +59,19 @@ class Predictor {
 
     const vector<char>* scope = nullptr;
 
-    const LVecVec &deps,     // dependencies of each theorem
-                  &syms,     // syms[t] holds the symbols of a theorem t
-                  &sym_ths;  // sym_ths[s] holds the theorems which contain s
+    const Rows &deps,     // dependencies of each theorem
+               &syms,     // syms[t] holds the symbols of a theorem t
+               &sym_ths;  // sym_ths[s] holds the theorems which contain s
 
-    const SVec *no_th = nullptr,
-               *no_sym = nullptr;
-    const SLMap* th_no = nullptr;
-    const HLMap* sym_no = nullptr;
+    const Names* names = nullptr;
+    const Features* features = nullptr;
 
   private:
     void print_answer(long no_adv);
 };
 
-Predictor::Predictor(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num)
+Predictor::Predictor(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+  long sym_num)
   : deps(deps), syms(syms), sym_ths(sym_ths) {}
 
 void Predictor::learn_all() {
@@ -89,7 +86,8 @@ LDPairVec Predictor::predict_weighted(const LDPairVec& query, long maxth,
 }
 
 LDPairVec Predictor::predict(long i, long maxth, long n_predictions) {
-  return predict(syms[i], maxth, n_predictions);
+  const Row s = syms[i];
+  return predict(LVec(s.begin(), s.end()), maxth, n_predictions);
 }
 
 long Predictor::keep_visible(LDPairVec& ans, long no_adv) const {
@@ -100,12 +98,9 @@ long Predictor::keep_visible(LDPairVec& ans, long no_adv) const {
   return min(no_adv, (long)ans.size());
 }
 
-void Predictor::set_tables(const SVec& no_th, const SVec& no_sym,
-  const SLMap& th_no, const HLMap& sym_no) {
-  this->no_th  = &no_th;
-  this->no_sym = &no_sym;
-  this->th_no  = &th_no;
-  this->sym_no = &sym_no;
+void Predictor::set_tables(const Names& names, const Features& features) {
+  this->names = &names;
+  this->features = &features;
 }
 
 // higher scores first; equal scores in theorem order, so that rankings do

@@ -93,7 +93,7 @@ void sort_fused(LDPairVec& ans, const vector<long>& first, long n) {
 // knn places a neighbour's (HOL4's add_thmdep), cut to no_adv.
 class MaSh : public Predictor {
   public:
-    MaSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+    MaSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
       long sym_num, long max_deps, bool credit_deps, bool deps_after = false);
 
     void learn(long from, long to);
@@ -116,7 +116,7 @@ class MaSh : public Predictor {
     bool credit_deps, deps_after;
 };
 
-MaSh::MaSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+MaSh::MaSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
   long sym_num, long max_deps, bool credit_deps, bool deps_after)
 : Predictor(deps, syms, sym_ths, sym_num),
   knn(deps, syms, sym_ths, sym_num, credit_deps),
@@ -162,7 +162,7 @@ LDPairVec MaSh::predict_deps_after(const LDPairVec& query, long maxth,
     &first);
   sort_fused(fused, first, keep_visible(fused, maxth));
   return place_in_order(fused, fused.size(), maxth, no_adv, credit_deps,
-    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return deps[i]; },
     [&](long i) { return visible(i, maxth); });
 }
 
@@ -228,7 +228,7 @@ LDPairVec mesh_fusion(long maxth, long no_adv, bool over, MePoFirst mepo,
 // them.
 class MeSh : public Predictor {
   public:
-    MeSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+    MeSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
       long sym_num, const vector<unsigned char>& statures, long max_deps,
       bool credit_deps, bool over, const TypedTable* split = nullptr,
       const TypeTable* types = nullptr, const TypedSyms* typed = nullptr,
@@ -252,13 +252,13 @@ class MeSh : public Predictor {
     bool over;
 };
 
-MeSh::MeSh(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+MeSh::MeSh(const Rows& deps, const Rows& syms, const Rows& sym_ths,
   long sym_num, const vector<unsigned char>& statures, long max_deps,
   bool credit_deps, bool over, const TypedTable* split, const TypeTable* types,
   const TypedSyms* typed, const TypedSyms* freq_only)
 : Predictor(deps, syms, sym_ths, sym_num),
   mepo(deps, split ? split->syms : syms, split ? split->sym_ths : sym_ths,
-    split ? (long)split->no_sym.size() : sym_num, statures,
+    split ? split->features.size() : sym_num, statures,
     split ? types : nullptr, split ? typed : nullptr,
     split ? freq_only : nullptr),
   mash(deps, syms, sym_ths, sym_num, max_deps, credit_deps, split != nullptr),

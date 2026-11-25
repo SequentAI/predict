@@ -45,7 +45,7 @@ bool valid_theory(const string& theory) {
    thmid:theory private
    into [theories], indexed by theorem. Ids are written as in <deps>;
    theorems without a line keep what they had. */
-void read_theories(const string& fname, const SLMap& th_no,
+void read_theories(const string& fname, const Names& th_no,
                    Theories& theories) {
   ifstream ic(fname);
   if (!ic)
@@ -57,8 +57,8 @@ void read_theories(const string& fname, const SLMap& th_no,
     if (pos == line.size())
       exit_error("Expected colon in line `" + line + "'!");
     ++pos;
-    auto got = th_no.find(thn);
-    if (got == th_no.end()) {
+    const long th = th_no.find(thn);
+    if (th == -1) {
       cerr << "theory item missing in seq: " << thn << endl;
       continue;
     }
@@ -68,8 +68,8 @@ void read_theories(const string& fname, const SLMap& th_no,
     if (!valid_theory(theory) || (flag != "" && flag != "private"))
       exit_error("Expected `id:theory' or `id:theory private', not `" +
                  line + "'!");
-    theories.of[got->second] = theories.number(theory);
-    theories.priv[got->second] = flag == "private";
+    theories.of[th] = theories.number(theory);
+    theories.priv[th] = flag == "private";
   }
 }
 
@@ -214,48 +214,53 @@ void boost_ancestors(LDPairVec& ans, const function<bool(long)>& ancestor,
    stay known, possibly with no theorem having them. */
 void remove_theory(Corpus& corpus, vector<unsigned char>& statures,
                    Theories& theories, long t) {
-  const long n = corpus.no_th.size();
+  const long n = corpus.names.size();
   vector<long> to(n, -1);
   long m = 0;
   for (long i = 0; i < n; ++i)
     if (theories.of[i] != t) to[i] = m++;
+  Names names;
+  for (long i = 0; i < n; ++i)
+    if (to[i] != -1) names.push_back(string(corpus.names[i]));
+  corpus.names = move(names);
+  auto& deps = corpus.deps.own();
+  auto& syms = corpus.syms.own();
+  vector<vector<int32_t> >* split_syms =
+    corpus.split ? &corpus.split->syms.own() : nullptr;
   for (long i = 0; i < n; ++i) {
     if (to[i] == -1) continue;
-    corpus.no_th[to[i]] = corpus.no_th[i];
-    corpus.deps[to[i]] = corpus.deps[i];
-    corpus.syms[to[i]] = corpus.syms[i];
+    deps[to[i]] = deps[i];
+    syms[to[i]] = syms[i];
     if (corpus.types) {
       corpus.typed[to[i]] = corpus.typed[i];
       corpus.freq_only[to[i]] = corpus.freq_only[i];
     }
-    if (corpus.split) corpus.split->syms[to[i]] = corpus.split->syms[i];
+    if (split_syms) (*split_syms)[to[i]] = (*split_syms)[i];
     statures[to[i]] = statures[i];
     theories.of[to[i]] = theories.of[i];
     theories.priv[to[i]] = theories.priv[i];
   }
-  corpus.no_th.resize(m);
-  corpus.deps.resize(m);
-  corpus.syms.resize(m);
+  deps.resize(m);
+  syms.resize(m);
   if (corpus.types) {
     corpus.typed.resize(m);
     corpus.freq_only.resize(m);
   }
-  if (corpus.split) corpus.split->syms.resize(m);
+  if (split_syms) split_syms->resize(m);
+  corpus.sorted_syms = Rows();
   statures.resize(m);
   theories.of.resize(m);
   theories.priv.resize(m);
-  auto renumber = [&](LVec& ths) {
-    LVec out;
+  auto renumber = [&](vector<int32_t>& ths) {
+    vector<int32_t> out;
     for (const auto i : ths)
       if (to[i] != -1) out.push_back(to[i]);
     ths = out;
   };
-  for (auto& ds : corpus.deps) renumber(ds);
-  for (auto& ths : corpus.sym_ths) renumber(ths);
+  for (auto& ds : deps) renumber(ds);
+  for (auto& ths : corpus.sym_ths.own()) renumber(ths);
   if (corpus.split)
-    for (auto& ths : corpus.split->sym_ths) renumber(ths);
-  corpus.th_no.clear();
-  for (long i = 0; i < m; ++i) corpus.th_no[corpus.no_th[i]] = i;
+    for (auto& ths : corpus.split->sym_ths.own()) renumber(ths);
 }
 
 /* The first theorem of theory [t] (-1 for none), or the number of theorems
@@ -281,8 +286,8 @@ long last_theory_start(const Corpus& corpus, const Theories& theories,
   // its first theorem is the one that numbered it
   const long sym_num = corpus.sym_ths.size();
   long first_new = sym_num;
-  for (long i = from; i < (long)corpus.syms.size(); ++i)
-    for (const auto s : corpus.syms[i])
+  for (long i = from; i < corpus.syms.size(); ++i)
+    for (const long s : corpus.syms[i])
       if (s >= kept_syms && corpus.sym_ths[s][0] >= from)
         first_new = min(first_new, s);
   for (long s = first_new; s < sym_num; ++s)
@@ -296,44 +301,36 @@ long last_theory_start(const Corpus& corpus, const Theories& theories,
    theorem has, down to [kept_syms] features. Typed symbols stay numbered. */
 void drop_last_theory(Corpus& corpus, vector<unsigned char>& statures,
                       Theories& theories, long from, long kept_syms) {
-  const long n = corpus.no_th.size();
+  const long n = corpus.names.size();
   LVec dropped;
   for (long i = from; i < n; ++i) {
-    dropped.insert(dropped.end(), corpus.syms[i].begin(),
-      corpus.syms[i].end());
-    corpus.th_no.erase(corpus.no_th[i]);
+    const Row s = corpus.syms[i];
+    dropped.insert(dropped.end(), s.begin(), s.end());
   }
   sort(dropped.begin(), dropped.end());
   dropped.erase(unique(dropped.begin(), dropped.end()), dropped.end());
   // not always at the end of the list: <syms> may give a feature to a
   // theorem before [from] after one at or past it
-  for (const auto s : dropped) {
-    LVec& ths = corpus.sym_ths[s];
-    ths.erase(remove_if(ths.begin(), ths.end(),
-      [&](long i) { return i >= from; }), ths.end());
-  }
+  for (const auto s : dropped) corpus.sym_ths.erase_from(s, from);
   if (corpus.split) {
     for (long i = from; i < n; ++i)
-      for (const auto s : corpus.split->syms[i]) {
-        LVec& ths = corpus.split->sym_ths[s];
-        ths.erase(remove_if(ths.begin(), ths.end(),
-          [&](long j) { return j >= from; }), ths.end());
-      }
+      for (const auto s : corpus.split->syms[i])
+        corpus.split->sym_ths.erase_from(s, from);
     corpus.split->syms.resize(from);
     corpus.typed.resize(from);
     corpus.freq_only.resize(from);
   }
-  corpus.no_th.resize(from);
+  corpus.names.resize(from);
   corpus.deps.resize(from);
   corpus.syms.resize(from);
+  if (corpus.sorted_syms.size() > from) corpus.sorted_syms = Rows();
   statures.resize(from);
   theories.of.resize(from);
   theories.priv.resize(from);
-  while ((long)corpus.no_sym.size() > kept_syms &&
-         corpus.sym_ths.back().empty()) {
-    corpus.sym_no.erase(feature_hash(corpus.no_sym.back()));
-    corpus.no_sym.pop_back();
-    corpus.sym_ths.pop_back();
+  while (corpus.features.size() > kept_syms &&
+         corpus.sym_ths[corpus.sym_ths.size() - 1].empty()) {
+    corpus.features.pop_back();
+    corpus.sym_ths.resize(corpus.sym_ths.size() - 1);
   }
 }
 

@@ -1992,4 +1992,170 @@ for c in "!version Script v1 $WORK/cnew.syms $WORK/cnew.deps $WORK/cnew.seq $WOR
 done
 if [ -n "$msg" ]; then fail "-P !add and !replace" "$msg"; else ok "-P !add and !replace"; fi
 
+# 56. a process started on a snapshot maps it: with theorems after it or
+# not, it ranks as the text, scores included, for every method; so does one
+# started on a snapshot it wrote (-i and -o), and one changing its corpus
+# with !add and !replace, of a theory before others and of the snapshot's
+# own last theory. Writing a snapshot over one makes a new file. The
+# snapshot starts with the magic line callers look for;
+# a corrupt one is refused with exit status 3; and a process started on a
+# large one holds little of it in its own memory.
+number=56
+LIMIT=600
+msg=
+cmp -s <(head -c 17 "$WORK/lists.snap") <(printf 'predict snapshot\n') ||
+  msg="lists.snap does not start with the magic line"
+run rest -i "$WORK/head.snap" -o "$WORK/both.snap" 2>/dev/null ||
+  msg="-i and -o: exit status $?"
+# writing a snapshot over another makes a new file, leaving the old one to
+# the processes mapping it
+cp "$WORK/both.snap" "$WORK/again.snap"
+inode=$(stat -c %i "$WORK/again.snap")
+run rest -i "$WORK/head.snap" -o "$WORK/again.snap" 2>/dev/null &&
+  [ "$(stat -c %i "$WORK/again.snap")" != "$inode" ] &&
+  cmp -s "$WORK/both.snap" "$WORK/again.snap" ||
+  msg="-o over a snapshot rewrote its file in place"
+# synth without the dependencies of its first 4000 theorems on later ones,
+# which their snapshot drops
+cp "$WORK/synth.seq" "$WORK/cut.seq"
+cp "$WORK/synth.syms" "$WORK/cut.syms"
+{
+  awk '{ n = split($0, w, /[: ]/); out = w[1] ":"; sep = ""
+         for (k = 2; k <= n; k++)
+           if (w[k] != "" && substr(w[k], 2) + 0 < 4000) { out = out sep w[k]; sep = " " }
+         print out }' "$WORK/head.deps"
+  cat "$WORK/rest.deps"
+} > "$WORK/cut.deps"
+for m in $methods nbayes-dense cosine-dense "rforest -t 8"; do
+  [ -n "$msg" ] && break
+  a=$(checked cut -p $m -n 100 -S < "$WORK/synth.wqueries")
+  b=$(checked rest -i "$WORK/head.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
+  c=$(checked none -i "$WORK/both.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
+  d=$(checked none -i "$WORK/lists.snap" -p $m -n 16 -S < "$WORK/lists.wqueries")
+  [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] &&
+    [ "$d" = "$(checked lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ] ||
+    msg="$m: the snapshot ranks otherwise than the text"
+done
+checked up -o "$WORK/up.snap" </dev/null
+for m in $methods nbayes-dense cosine-dense rforest; do
+  [ -n "$msg" ] && break
+  out=$(note='on a snapshot with !add and !replace' checked none -i "$WORK/up.snap" -L "$WORK/up.thy" -n 20 -S -p $m <<<"$queries
+!add $(files down)
+$queries
+!replace Script $(files new)
+$queries")
+  want="$(checked up -L "$WORK/up.thy" -n 20 -S -p $m <<<"$queries")
+12
+$(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")
+11
+$(checked kept -L "$WORK/kept.thy" -n 20 -S -p $m <<<"$queries")"
+  [ "$out" = "$want" ] || { msg="$m, !add and !replace: '$out', not '$want'"; break; }
+  # Down, the snapshot's last theory, is replaced in place
+  out=$(note='on a snapshot with !replace of its last theory' checked none -i "$WORK/dag.snap" -L "$WORK/dag.thy" -n 20 -S -p $m <<<"!replace Down $(files down)
+$queries")
+  want="12
+$(checked dag -L "$WORK/dag.thy" -n 20 -S -p $m <<<"$queries")"
+  [ "$out" = "$want" ] || msg="$m, !replace of the snapshot's last theory: '$out', not '$want'"
+done
+if [ -z "$msg" ]; then
+  # with -P: a snapshot of a snapshot and Down, which is then replaced
+  run cdown -i "$WORK/cup.snap" -p mesh -P -o "$WORK/cboth.snap" 2>/dev/null ||
+    msg="-P with -i and -o: exit status $?"
+  for i in "${!untyped_parts[@]}"; do
+    [ -n "$msg" ] && break
+    q="${untyped_parts[$i]}, ${typed_parts[$i]}"
+    a=$(checked cdag -p mesh -P -L "$WORK/cdag.thy" -n 12 -S <<<"$q")
+    b=$(checked none -i "$WORK/cboth.snap" -p mesh -P -L "$WORK/cdag.thy" -n 12 -S <<<"!replace Down $(files cdown)
+$q")
+    [ -n "$a" ] && [ "$b" = "12
+$a" ] || msg="-P on '$q': text '$a', snapshot of a snapshot '$b'"
+  done
+fi
+# corrupt <name> <change>: lists.snap changed by the Python statement
+# <change> as $WORK/<name>.snap, where `data` is the file, `sec` the offset
+# and length of each section (in the order of snapshot.cpp's Section) and
+# `head` the offset of the format number
+corrupt() {
+  python3 - "$WORK/lists.snap" "$WORK/$1.snap" "$2" <<'PY'
+import struct, sys
+data = bytearray(open(sys.argv[1], "rb").read())
+pos = len(b"predict snapshot\n")
+def varint():
+    global pos
+    n = shift = 0
+    while True:
+        b = data[pos]
+        pos += 1
+        n |= (b & 0x7f) << shift
+        shift += 7
+        if not b & 0x80:
+            return n
+n = varint()
+pos += n
+varint()
+head = (pos + 7) // 8 * 8
+sec = [struct.unpack_from("<2Q", data, head + 32 + 16 * k) for k in range(19)]
+NAME_ORDER, SYMS_OFFSETS, SYMS = 2, 7, 8
+def put(fmt, at, *xs):
+    struct.pack_into(fmt, data, at, *xs)
+exec(sys.argv[3])
+open(sys.argv[2], "wb").write(data)
+PY
+}
+corrupt format 'put("<Q", head, 3)'
+corrupt section 'put("<Q", head + 32 + 16 * SYMS, sec[SYMS][0] + 4096)'
+corrupt rows 'put("<Q", sec[SYMS_OFFSETS][0] + 8, 1 << 40)'
+corrupt number 'put("<i", sec[SYMS][0], 1 << 30)'
+corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, sec[NAME_ORDER][0])[::-1])'
+corrupt longer 'data.append(0)'
+for c in "format:of format 3" "section:" "rows:offsets are malformed" \
+         "number:out of range" "order:not sorted" "longer:longer than its contents"; do
+  [ -n "$msg" ] && break
+  snap=${c%%:*} why=${c#*:}
+  out=$(run none -i "$WORK/$snap.snap" -p cosine -n 16 < "$DATA/lists.queries")
+  status=$?
+  if [ $status -ne 3 ] || [ -n "$out" ] ||
+     ! grep -q "^Error: cannot use snapshot.*$why" "$WORK/stderr" ||
+     [ "$(wc -l < "$WORK/stderr")" -ne 1 ]; then
+    msg="$snap: exit status $status, stderr '$(cat "$WORK/stderr")'"
+  fi
+done
+# private_memory <snapshot>: the anonymous memory in kB of a cosine process
+# started on <snapshot>, once it has learned: its own memory, which the
+# pages of the mapped snapshot are not unless it writes them (their dirty
+# count is the page cache's, dirty until the file written is flushed)
+private_memory() {
+  local pid
+  rm -f "$WORK/in"
+  mkfifo "$WORK/in"
+  "$PREDICT" "$WORK/none.syms" "$WORK/none.deps" "$WORK/none.seq" -i "$1" \
+    -p cosine -n 1 < "$WORK/in" > /dev/null 2> "$WORK/stderr" &
+  pid=$!
+  exec 9> "$WORK/in"
+  for _ in $(seq 6000); do
+    grep -q "Learning done" "$WORK/stderr" && break
+    kill -0 $pid 2>/dev/null || break
+    sleep 0.1
+  done
+  # one that has not learned by then has hung, and fails
+  grep -q "Learning done" "$WORK/stderr" || kill $pid 2>/dev/null
+  awk '/^Anonymous:/ { print $2 }' /proc/$pid/smaps_rollup 2>/dev/null
+  exec 9>&-
+  wait $pid || echo "'$PREDICT -i $1' exited with status $?" >> "$WORK/failed"
+}
+if [ -z "$msg" ] && [ -r /proc/self/smaps_rollup ]; then
+  # 20000 theorems of about 100 features: about 2 million numbers in each of
+  # the three tables of features, 8 MB each
+  python3 "$TESTS/gen.py" "$WORK/big" 20000 100 50000 2 1
+  run big -o "$WORK/big.snap" 2>/dev/null
+  small=$(private_memory "$WORK/lists.snap")
+  large=$(private_memory "$WORK/big.snap")
+  size=$(($(wc -c < "$WORK/big.snap") / 1024))
+  if [ -z "$small" ] || [ -z "$large" ] || [ $((large - small)) -gt $((size / 4)) ]; then
+    msg="started on a snapshot of $size kB, a process holds $large kB, $small kB on a small one"
+  fi
+fi
+LIMIT=5
+if [ -n "$msg" ]; then fail "mapped snapshots" "$msg"; else ok "mapped snapshots"; fi
+
 [ $failures -eq 0 ]

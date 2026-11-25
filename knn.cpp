@@ -5,7 +5,7 @@
 class kNN : public Predictor {
   public:
     // [credit_deps] makes the dependencies of each neighbour gain relevance
-    kNN(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+    kNN(const Rows& deps, const Rows& syms, const Rows& sym_ths,
       long sym_num, bool credit_deps);
 
     void learn(long from, long to);
@@ -29,8 +29,8 @@ class kNN : public Predictor {
     bool credit_deps;
 };
 
-kNN::kNN(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num, bool credit_deps)
+kNN::kNN(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+  long sym_num, bool credit_deps)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num),
   credit_deps(credit_deps) {
 }
@@ -148,7 +148,7 @@ void credit_neighbours(LDPairVec& ans, LDPairVec neighbours, long no_adv,
     // dependencies of the neighbor also gain some relevance, depending on the
     // number of dependencies of the current theorem
     if (!credit_deps) continue;
-    const LVec& ds = deps_of(nn);
+    const auto& ds = deps_of(nn);
     if (ds.empty()) continue;
     double ol = 2.7 * o / ds.size();
     for (const auto& d : ds) {
@@ -175,7 +175,7 @@ LDPairVec kNN::similarities(const LVec& csyms, long maxth) const {
   // for each symbol, increase the importance of the theorems which contain
   // the symbol by a given symbol weight
   for (const auto& sym : csyms) {
-    const LVec& ths = sym_ths[sym];
+    const Row ths = sym_ths[sym];
     double weight = tfidf.get(sym);
     for (const auto& th : ths) {
       if (visible(th, maxth)) ans[th].second += pow(weight, 6);
@@ -188,7 +188,7 @@ LDPairVec kNN::predict(const LVec& csyms, long maxth, long no_adv) const {
   LDPairVec neighbours = similarities(csyms, maxth);
   keep_visible(neighbours, maxth);
   return place_deps(move(neighbours), maxth, no_adv, credit_deps,
-    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return deps[i]; },
     [&](long i) { return visible(i, maxth); });
 }
 
@@ -199,7 +199,7 @@ LDPairVec kNN::predict_neighbours(const LDPairVec& query, long maxth,
   LDPairVec neighbours = similarities(csyms, maxth);
   keep_visible(neighbours, maxth);
   return place_deps(move(neighbours), maxth, no_adv, false,
-    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return deps[i]; },
     [&](long i) { return visible(i, maxth); });
 }
 
@@ -211,7 +211,7 @@ LDPairVec kNN::predict_credited(const LDPairVec& query, long maxth,
   LDPairVec neighbours(ans);
   keep_visible(neighbours, maxth);
   credit_neighbours(ans, move(neighbours), no_adv, credit_deps,
-    [&](long i) -> const LVec& { return deps[i]; },
+    [&](long i) { return deps[i]; },
     [&](long i) { return visible(i, maxth); });
 
   sort_prediction(ans, keep_visible(ans, no_adv));

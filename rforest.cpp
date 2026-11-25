@@ -10,8 +10,8 @@
 
 class RandomForest : public Predictor {
   public:
-    RandomForest(const LVecVec& deps, const LVecVec& syms,
-      const LVecVec& sym_ths, long sym_num,
+    RandomForest(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+      long sym_num,
       long n_trees, long n_samples, long n_features, double depweight);
     ~RandomForest();
 
@@ -54,8 +54,8 @@ class RandomForest : public Predictor {
 };
 
 // TODO: seed hard-coded ...
-RandomForest::RandomForest(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num,
+RandomForest::RandomForest(const Rows& deps, const Rows& syms,
+  const Rows& sym_ths, long sym_num,
   long n_trees, long n_samples, long n_features, double depweight)
 : Predictor(deps, syms, sym_ths, sym_num), forest(n_trees, NULL),
   n_samples(n_samples), n_features(n_features), depweight(depweight),
@@ -74,7 +74,7 @@ void RandomForest::import_data(string dirname) {
   for (unsigned i = 0; i < forest.size(); i++) {
     delete forest[i];
     forest[i] = new DecisionTree(dirname + "/tree" + to_string(i) + ".dot",
-      *th_no, *sym_no);
+      *names, *features);
   }
   prelearned = true;
 }
@@ -82,7 +82,7 @@ void RandomForest::import_data(string dirname) {
 void RandomForest::export_data(string dirname) const {
   for (unsigned i = 0; i < forest.size(); i++)
     forest[i]->write_to_file(dirname + "/tree" + to_string(i) + ".dot",
-      *no_th, *no_sym);
+      *names, *features);
 }
 
 void RandomForest::learn(long from, long to) {
@@ -167,7 +167,7 @@ LDPairVec RandomForest::predict(const LVec& csyms, long maxth, long no_adv)
 
     ans[label.first].second += label.second; // / pow(labels_ti.get(label), 1);
 
-    const LVec& ds = deps[label.first];
+    const Row ds = deps[label.first];
     for (const auto& dep : ds) {
         //cerr << dw / pow(labels_ti.get(dep), 3) << endl;
       if (!visible(dep, maxth)) // a dependency from the future or out of scope
@@ -185,7 +185,7 @@ long RandomForest::n_of_samples_with_label(const LVec& samples, long label)
   const {
   long sum = 0;
   for (const auto& sample : samples) {
-    const LVec& ds = deps[sample];
+    const Row ds = deps[sample];
     if (sample == label || find(ds.begin(), ds.end(), label) != ds.end())
       sum++;
   }
@@ -222,7 +222,7 @@ double RandomForest::gini_part(const LVec& samples) const {
 double RandomForest::gini_index(const LVec& samples, long feature) const {
   LVec yes, no;
   for (const auto& sample : samples) {
-    const LVec& features = syms[sample];
+    const Row features = syms[sample];
     if (find(features.begin(), features.end(), feature) != features.end())
       yes.push_back(sample);
     else
@@ -245,7 +245,7 @@ long RandomForest::feature_minlabels(const LVec& samples, long feature)
   const {
   LVec left, right;
   for (const auto& sample : samples) {
-    const LVec& csyms = syms[sample];
+    const Row csyms = syms[sample];
     if (find(csyms.begin(), csyms.end(), feature) != csyms.end())
       left.push_back(sample);
     else
@@ -369,7 +369,7 @@ void RandomForest::update_tree(DecisionTree *tree, const LVec& new_samples) {
     tree->right = new DecisionTree;
   }
 
-  const LVec& best = sym_ths[best_f];
+  const Row best = sym_ths[best_f];
 
   LVec left, right;
 
@@ -420,7 +420,7 @@ DecisionTree* RandomForest::grow_tree(const LVec& samples,
   if (best_f == -1)
     return new DecisionTree(samples);
 
-  const LVec& best = sym_ths[best_f];
+  const Row best = sym_ths[best_f];
 
   LVec left, right;
 
@@ -457,20 +457,26 @@ class RandomForestView : public ViewPredictor {
 
   private:
     const View& view;
-    LVecVec deps, syms, sym_ths;  // as a process reads them, by rank
+    Rows deps, syms, sym_ths;  // as a process reads them, by rank
     unique_ptr<RandomForest> forest;
 };
 
 RandomForestView::RandomForestView(const View& view, long sym_num,
   long n_trees, long n_samples, long n_features, double depweight)
-: view(view), sym_ths(view.features()) {
+: view(view) {
   const LVec table = view.rank_table(sym_num), ids = view.id_table();
+  sym_ths.resize(view.features());
+  deps.resize(view.size());
+  syms.resize(view.size());
+  long i = 0;
   for (const auto v : view.versions)
     for (const auto& s : v->syms) {
-      const long i = syms.size();
-      deps.push_back(view.deps_of(i, ids));
-      syms.push_back(ranks_in(s, table));
-      for (const auto f : syms.back()) sym_ths[f].push_back(i);
+      for (const auto d : view.deps_of(i, ids)) deps.push(i, d);
+      for (const auto f : ranks_in(s, table)) {
+        syms.push(i, f);
+        sym_ths.push(f, i);
+      }
+      ++i;
     }
   forest.reset(new RandomForest(deps, syms, sym_ths, view.features(),
     n_trees, n_samples, n_features, depweight));

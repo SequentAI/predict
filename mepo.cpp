@@ -103,7 +103,7 @@ class MePo : public Predictor {
     // [types], [typed], the theorems' typed symbols, and [freq_only],
     // their occurrences counted only in frequencies, are given for
     // predict_typed and null otherwise.
-    MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+    MePo(const Rows& deps, const Rows& syms, const Rows& sym_ths,
       long sym_num, const vector<unsigned char>& statures,
       const TypeTable* types = nullptr, const TypedSyms* typed = nullptr,
       const TypedSyms* freq_only = nullptr);
@@ -125,7 +125,7 @@ class MePo : public Predictor {
     struct Facts {
       const MePo& p;
       long size() const { return p.syms.size(); }
-      const LVec& syms(long i) const { return p.syms[i]; }
+      Row syms(long i) const { return p.syms[i]; }
       const vector<TypedSym>& typed(long i) const { return (*p.typed)[i]; }
       const vector<TypedSym>& freq_only(long i) const {
         return (*p.freq_only)[i];
@@ -180,7 +180,7 @@ void MePoRanking::resize(long sym_num) {
   tokens.resize(sym_num, 0);
 }
 
-MePo::MePo(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
+MePo::MePo(const Rows& deps, const Rows& syms, const Rows& sym_ths,
   long sym_num, const vector<unsigned char>& statures,
   const TypeTable* types, const TypedSyms* typed, const TypedSyms* freq_only)
 : Predictor(deps, syms, sym_ths, sym_num), statures(statures), typed(typed),

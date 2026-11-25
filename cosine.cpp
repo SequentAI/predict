@@ -11,8 +11,10 @@
 // compute the same scores.
 class Cosine : public Predictor {
   public:
-    Cosine(const LVecVec& deps, const LVecVec& syms, const LVecVec& sym_ths,
-      long sym_num, bool dense);
+    // [sorted_syms] gives the rows of [syms] sorted for some first theorems
+    // (Corpus::sorted_syms); Cosine sorts the others.
+    Cosine(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+      const Rows& sorted_syms, long sym_num, bool dense);
 
     void learn(long from, long to);
     bool forget(long from);
@@ -21,24 +23,33 @@ class Cosine : public Predictor {
       long no_adv) const;
 
   private:
+    // syms[i] in increasing feature order
+    Row sorted(long i) const;
     // the squared norm of theorem i's vector
     double norm2(long i) const;
 
     Tfidf tfidf;
     bool dense;
-    // syms[i] in increasing feature order
-    LVecVec sorted_syms;
-    // norm2 of the learned theorems
-    vector<double> norms2;
+    const Rows& sorted_syms;
+    // sorted(i) for i from own_from on, beyond sorted_syms
+    long own_from = 0;
+    vector<vector<int32_t> > own_sorted;
 };
 
-Cosine::Cosine(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num, bool dense)
-: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), dense(dense) {}
+Cosine::Cosine(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+  const Rows& sorted_syms, long sym_num, bool dense)
+: Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), dense(dense),
+  sorted_syms(sorted_syms) {}
+
+Row Cosine::sorted(long i) const {
+  if (i < own_from) return sorted_syms[i];
+  const auto& s = own_sorted[i - own_from];
+  return Row(s.data(), s.size());
+}
 
 double Cosine::norm2(long i) const {
   double n = 0;
-  for (const auto f : sorted_syms[i]) {
+  for (const auto f : sorted(i)) {
     const double idf = tfidf.get(f);
     n += idf * idf;
   }
@@ -47,25 +58,32 @@ double Cosine::norm2(long i) const {
 
 void Cosine::learn(long from, long to) {
   tfidf.resize(sym_ths.size());
-  for (long i = sorted_syms.size(); i < (long)syms.size(); ++i) {
-    sorted_syms.push_back(syms[i]);
-    sort(sorted_syms.back().begin(), sorted_syms.back().end());
+  // the corpus may have dropped its sorted rows since
+  if (own_from != sorted_syms.size()) {
+    own_from = sorted_syms.size();
+    own_sorted.clear();
+  }
+  for (long i = own_from + own_sorted.size(); i < syms.size(); ++i) {
+    const Row s = syms[i];
+    own_sorted.emplace_back(s.begin(), s.end());
+    sort(own_sorted.back().begin(), own_sorted.back().end());
+  }
+  if (from == 0 && to == (long)syms.size()) {
+    // every theorem: a feature's frequency is its number of theorems, read
+    // without the theorems' rows
+    vector<long> f(sym_ths.size());
+    for (long s = 0; s < (long)f.size(); ++s) f[s] = sym_ths[s].size();
+    tfidf.start(to, f);
+    return;
   }
   for (long i = from; i < to; ++i)
     tfidf.add(syms[i]);
-
-  // idf changes with every learned theorem, so every norm changes
-  if (!dense) {
-    norms2.resize(to);
-    for (long i = 0; i < to; ++i)
-      norms2[i] = norm2(i);
-  }
 }
 
 bool Cosine::forget(long from) {
   for (long i = from; i < (long)syms.size(); ++i)
     tfidf.remove(syms[i]);
-  sorted_syms.resize(from);
+  own_sorted.resize(max(0L, from - own_from));
   return true;
 }
 
@@ -102,7 +120,7 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
   if (dense) {
     for (long i = 0; i < maxth; ++i) {
       auto q = terms.begin();
-      for (const auto f : sorted_syms[i]) {
+      for (const auto f : sorted(i)) {
         while (q != terms.end() && q->first < f) ++q;
         if (q != terms.end() && q->first == f) ans[i].second += q->second;
       }
@@ -113,9 +131,11 @@ LDPairVec Cosine::predict_weighted(const LDPairVec& query, long maxth,
       for (const auto i : sym_ths[ft.first])
         if (visible(i, maxth)) ans[i].second += ft.second;
 
+  // a theorem's norm only where it is needed: idf changes with every
+  // learned theorem, so every norm changes
   for (long i = 0; i < maxth; ++i) {
-    const double n2 = dense ? norm2(i) : norms2[i];
-    if (ans[i].second != 0 && qnorm2 != 0 && n2 != 0)
+    const double n2 = ans[i].second != 0 && qnorm2 != 0 ? norm2(i) : 0;
+    if (n2 != 0)
       ans[i].second /= sqrt(qnorm2 * n2);
     else
       ans[i].second = 0;

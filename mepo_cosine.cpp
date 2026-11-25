@@ -5,8 +5,8 @@
 inline double sq(const double& x) { return x * x; }
 
 // [key](f) is the number of feature f of syms2 in syms1 and tfidf
-template <class Key>
-double cosine(const LDMap &syms1, const LVec &syms2,
+template <class Syms, class Key>
+double cosine(const LDMap &syms1, const Syms &syms2,
               const Tfidf &tfidf, Key key){
   double sig = 0, sig1 = 0, sig2 = 0;
   for (auto s : syms1)
@@ -46,8 +46,8 @@ const long mepo_cosine_incr = 100;
 
 class MePoCosine : public Predictor {
   public:
-    MePoCosine(const LVecVec& deps, const LVecVec& syms,
-      const LVecVec& sym_ths, long sym_num);
+    MePoCosine(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+      long sym_num);
 
     void learn(long from, long to);
 
@@ -58,8 +58,8 @@ class MePoCosine : public Predictor {
     Tfidf tfidf;
 };
 
-MePoCosine::MePoCosine(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num)
+MePoCosine::MePoCosine(const Rows& deps, const Rows& syms,
+  const Rows& sym_ths, long sym_num)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num) {
 }
 
@@ -107,7 +107,7 @@ LDPairVec MePoCosine::predict(const LVec& csyms, long maxth, long no_adv) const 
   for (long i = 0; i < maxth; ++i)
     if (visible(i, maxth)) ans.push_back(make_pair(i, 0.0));
   return mepo_cosine_rank(move(ans), csyms, no_adv, tfidf,
-    [&](long i) -> const LVec& { return syms[i]; }, [](long f) { return f; });
+    [&](long i) { return syms[i]; }, [](long f) { return f; });
 }
 
 // MePoCosine's ranking of the theorems of a view, computed as MePoCosine

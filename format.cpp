@@ -14,6 +14,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "tables.cpp"
 
 using namespace std;
 
@@ -41,15 +42,13 @@ void exit_error(string message) {
   exit(1);
 }
 
-/* Given a file name, fills the given empty [th_no], [no_th], and sets th_num */
-void read_order(const string &fname, SLMap &th_no, SVec &no_th) {
+/* Numbers the theorems of file [fname] after those of [th_no] */
+void read_order(const string &fname, Names &th_no) {
   ifstream ic(fname);
   string line;
   while (getline (ic, line)) {
-    if (th_no.find (line) == th_no.end ()) {
-      th_no[line] = no_th.size();
-      no_th.push_back(line);
-    }
+    if (th_no.find(line) == -1)
+      th_no.push_back(line);
     else
       exit_error("Duplicate `" + line + 
                  "' detected upon reading file `" + fname + ".");
@@ -82,7 +81,7 @@ void not_added(const string &fname, const string &th) {
 
 /* Given a file name and trans, fills deps in an allocated vector of empty vectors.
    A line of a theorem before [first] is an error. */
-void read_deps(const string &fname, SLMap &th_no, LVecVec &deps,
+void read_deps(const string &fname, const Names &th_no, Rows &deps,
                long first = 0) {
   ifstream ic(fname);
   string line;
@@ -92,10 +91,10 @@ void read_deps(const string &fname, SLMap &th_no, LVecVec &deps,
     if (pos == line.size())
       exit_error("Expected colon in line `" + line + "'!");
     ++pos;
-    if (th_no.find (thn) == th_no.end ())
+    const long th = th_no.find(thn);
+    if (th == -1)
       cerr << "dep item missing in seq: " << thn << endl;
     else {
-      long th = th_no[thn];
       if (th < first) not_added(fname, thn);
       while (pos < line.size()) {
         if (line[pos] == ' ') {
@@ -103,11 +102,12 @@ void read_deps(const string &fname, SLMap &th_no, LVecVec &deps,
           continue;
         }
         const string t = read_id(line, pos, " ");
-        if (th_no.find (t) == th_no.end ())
+        const long d = th_no.find(t);
+        if (d == -1)
           cerr << "dependency missing in seq: " << t << endl;
         else
           // a dependency may come later in <seq> than its dependent
-          deps[th].push_back(th_no[t]);
+          deps.push(th, d);
       }
     }
   }
@@ -450,9 +450,8 @@ void add_typed(vector<TypedSym> &ths, const TypedSym &ts) {
 // (-p knn, mash or mesh): numbered on their own, as a corpus of the typed
 // tokens alone numbers them, with the theorems that have each.
 struct TypedTable {
-  HLMap sym_no;
-  SVec no_sym;
-  LVecVec syms, sym_ths;
+  Features features;
+  Rows syms, sym_ths;
 };
 
 // parses strings of the format:
@@ -465,10 +464,9 @@ struct TypedTable {
 // frequency-only tokens are ignored. With [split] (and [types]), a token
 // with a type or a count is only a typed symbol, its feature numbered in
 // [split], and the others are only features. A line of a theorem before
-// [first] is an error.
-void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
-               long &sym_num, const SLMap &th_no,
-               HLMap &sym_no, SVec& no_sym,
+// [first] is an error. New features are numbered after those of [features].
+void read_syms(const string &fname, Rows &syms, Rows &sym_ths,
+               const Names &th_no, Features &features,
                TypeTable *types = nullptr, TypedSyms *typed = nullptr,
                TypedSyms *freq_only = nullptr, long first = 0,
                TypedTable *split = nullptr) {
@@ -480,10 +478,9 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
     if (pos == line.size())
       exit_error("Expected colon in line `" + line + "'!");
 
-    auto th_got = th_no.find(th_str);
-    if (th_got == th_no.end())
+    const long th = th_no.find(th_str);
+    if (th == -1)
       exit_error("Theorem `" + th_str + "' not found!");
-    long th = th_got->second;
     if (th < first) not_added(fname, th_str);
 
     // the theorem's features from its earlier lines count as seen
@@ -495,57 +492,40 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
       const string& f = t.feature;
       const uint64_t fh = feature_hash(f);
       if (split && (t.typed || t.freq_only)) {
-        auto got = split->sym_no.find(fh);
-        long s;
-        if (got == split->sym_no.end()) {
-          s = split->no_sym.size();
-          split->sym_no[fh] = s;
-          split->no_sym.push_back(f);
-          split->sym_ths.push_back(LVec());
+        long s = split->features.find(fh);
+        if (s == -1) {
+          s = split->features.add(fh, f);
+          split->sym_ths.resize(s + 1);
         }
-        else s = got->second;
         if (t.freq_only) {
           add_typed((*freq_only)[th], typed_sym(s, t, *types));
           continue;
         }
         if (seen_typed.insert(s).second) {
-          split->syms[th].push_back(s);
-          split->sym_ths[s].push_back(th);
+          split->syms.push(th, s);
+          split->sym_ths.push(s, th);
         }
         add_typed((*typed)[th], typed_sym(s, t, *types));
         continue;
       }
-      auto ftr_got = sym_no.find(fh);
+      long s = features.find(fh);
       if (t.freq_only) {
         if (!types || split) continue;
-        long s;
-        if (ftr_got == sym_no.end()) {
-          s = sym_num;
-          sym_ths.push_back(vector<long>());
-          sym_no[fh] = sym_num++;
-          no_sym.push_back(f);
+        if (s == -1) {
+          s = features.add(fh, f);
+          sym_ths.resize(s + 1);
         }
-        else s = ftr_got->second;
         add_typed((*freq_only)[th], typed_sym(s, t, *types));
         continue;
       }
-      long s;
-      if (ftr_got == sym_no.end()) {
-        s = sym_num;
-        syms[th].push_back(sym_num);
-        sym_ths.push_back(vector<long>(1,th));
-        seen.insert(sym_num);
-
+      if (s == -1) {
         // register new feature
-        sym_no[fh] = sym_num++;
-        no_sym.push_back(f);
+        s = features.add(fh, f);
+        sym_ths.resize(s + 1);
       }
-      else {
-        s = ftr_got->second;
-        if (seen.insert(s).second) {
-          syms[th].push_back(s);
-          sym_ths[s].push_back(th);
-        }
+      if (seen.insert(s).second) {
+        syms.push(th, s);
+        sym_ths.push(s, th);
       }
       if (types && !split) add_typed((*typed)[th], typed_sym(s, t, *types));
     }
@@ -555,17 +535,19 @@ void read_syms(const string &fname, LVecVec &syms, LVecVec &sym_ths,
 // Parses a query line into (feature, weight) pairs, dropping unknown
 // features. A feature repeated in the query counts once, with its largest
 // weight.
-LDPairVec feature_list(const vector<Token>& tokens, const HLMap& ftr_no) {
+// [ftr_no] is the corpus's Features or a view's map (find_feature).
+template <class Index>
+LDPairVec feature_list(const vector<Token>& tokens, const Index& ftr_no) {
   LDPairVec result;
   unordered_map<long, size_t> index;
   for (const auto& t : tokens) {
-    auto got = ftr_no.find(feature_hash(t.feature));
-    if (got == ftr_no.end())
+    const long f = find_feature(ftr_no, feature_hash(t.feature));
+    if (f == -1)
       continue;
-    auto seen = index.find(got->second);
+    auto seen = index.find(f);
     if (seen == index.end()) {
-      index[got->second] = result.size();
-      result.push_back(make_pair(got->second, t.weight));
+      index[f] = result.size();
+      result.push_back(make_pair(f, t.weight));
     }
     else
       result[seen->second].second = max(result[seen->second].second, t.weight);
@@ -574,21 +556,23 @@ LDPairVec feature_list(const vector<Token>& tokens, const HLMap& ftr_no) {
   return result;
 }
 
+template <class Index>
 LDPairVec parse_feature_list(string::iterator begin, string::iterator end,
-  const HLMap& ftr_no) {
+  const Index& ftr_no) {
   return feature_list(parse_string_list(begin, end, true), ftr_no);
 }
 
 // Parses a query line into typed symbols, dropping unknown features. A
 // feature repeated with an equal type counts once, with its largest weight.
-vector<TypedSym> typed_query(const vector<Token>& tokens, const HLMap& ftr_no,
+template <class Index>
+vector<TypedSym> typed_query(const vector<Token>& tokens, const Index& ftr_no,
   TypeTable& types) {
   vector<TypedSym> result;
   for (const auto& t : tokens) {
-    auto got = ftr_no.find(feature_hash(t.feature));
-    if (got == ftr_no.end())
+    const long f = find_feature(ftr_no, feature_hash(t.feature));
+    if (f == -1)
       continue;
-    const TypedSym ts = typed_sym(got->second, t, types);
+    const TypedSym ts = typed_sym(f, t, types);
     auto same = find_if(result.begin(), result.end(), [&](const TypedSym& o) {
       return o.sym == ts.sym && o.ptype == ts.ptype; });
     if (same == result.end()) result.push_back(ts);
@@ -597,8 +581,9 @@ vector<TypedSym> typed_query(const vector<Token>& tokens, const HLMap& ftr_no,
   return result;
 }
 
+template <class Index>
 vector<TypedSym> parse_typed_query(string::iterator begin,
-  string::iterator end, const HLMap& ftr_no, TypeTable& types) {
+  string::iterator end, const Index& ftr_no, TypeTable& types) {
   return typed_query(parse_string_list(begin, end, true), ftr_no, types);
 }
 
@@ -606,13 +591,13 @@ vector<TypedSym> parse_typed_query(string::iterator begin,
 // [split]: its tokens with a type as parse_typed_query into [typed], and the
 // others as parse_feature_list into [untyped].
 void parse_split_query(string::iterator begin, string::iterator end,
-  const HLMap& ftr_no, const TypedTable& split, TypeTable& types,
+  const Features& ftr_no, const TypedTable& split, TypeTable& types,
   LDPairVec& untyped, vector<TypedSym>& typed) {
   vector<Token> plain, with_type;
   for (auto& t : parse_string_list(begin, end, true))
     (t.typed ? with_type : plain).push_back(move(t));
   untyped = feature_list(plain, ftr_no);
-  typed = typed_query(with_type, split.sym_no, types);
+  typed = typed_query(with_type, split.features, types);
 }
 
 // Fact statures, as bit flags: a fact may be a simp rule, local to the goal's
@@ -623,7 +608,7 @@ const unsigned char STATURE_SIMP = 1, STATURE_LOCAL = 2;
    thmid:flag1 flag2 ...
    where a flag is `simp` or `local`, into [statures], indexed by theorem.
    Theorems without a line have no flag. */
-void read_statures(const string &fname, const SLMap &th_no,
+void read_statures(const string &fname, const Names &th_no,
                    vector<unsigned char> &statures) {
   ifstream ic(fname);
   if (!ic)
@@ -635,8 +620,8 @@ void read_statures(const string &fname, const SLMap &th_no,
     if (pos == line.size())
       exit_error("Expected colon in line `" + line + "'!");
     ++pos;
-    auto got = th_no.find(thn);
-    if (got == th_no.end()) {
+    const long th = th_no.find(thn);
+    if (th == -1) {
       cerr << "stature item missing in seq: " << thn << endl;
       continue;
     }
@@ -648,9 +633,9 @@ void read_statures(const string &fname, const SLMap &th_no,
       const size_t stop = min(line.find(' ', pos), line.size());
       const string flag = line.substr(pos, stop - pos);
       if (flag == "simp")
-        statures[got->second] |= STATURE_SIMP;
+        statures[th] |= STATURE_SIMP;
       else if (flag == "local")
-        statures[got->second] |= STATURE_LOCAL;
+        statures[th] |= STATURE_LOCAL;
       else
         exit_error("Unknown stature `" + flag + "' in line `" + line + "'!");
       pos = stop;
@@ -658,17 +643,17 @@ void read_statures(const string &fname, const SLMap &th_no,
   }
 }
 
-void read_eval(const string &fname, const unordered_map<string, long> &th_no,
+void read_eval(const string &fname, const Names &th_no,
                unordered_set<long> &eval) {
   ifstream ic(fname);
   string line;
   while (getline(ic, line)) {
-    auto get = th_no.find (line);
-    if (get == th_no.end())
+    const long th = th_no.find(line);
+    if (th == -1)
       exit_error("Could not find theorem `" + line +
                  "' in file `" + fname + "'.");
     else
-      eval.insert(get->second);
+      eval.insert(th);
   }
 }
 
