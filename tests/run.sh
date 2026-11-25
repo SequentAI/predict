@@ -1004,6 +1004,13 @@ if [ -z "$msg" ]; then
   b=$(run rest -i "$WORK/head.snap" -p cosine -n 5000 -S < "$WORK/synth.all")
   [ -n "$a" ] && [ "$a" = "$b" ] || msg="cosine on a snapshot of synth's first 4000 theorems and the rest as text"
 fi
+if [ -z "$msg" ]; then
+  # evaluation points before and after the snapshot's last theorem: before
+  # it, naive Bayes must not take the stored counts of later theorems
+  a=$(run synth -p nbayes -n 100 -S -e "$WORK/synth.eval")
+  b=$(run rest -i "$WORK/head.snap" -p nbayes -n 100 -S -e "$WORK/synth.eval")
+  [ -n "$a" ] && same_answers nbayes "$a" "$b" || msg="nbayes with -e on a snapshot of synth's first 4000 theorems"
+fi
 LIMIT=5
 if [ -n "$msg" ]; then fail "snapshot rankings" "rankings differ: $msg"; else ok "snapshot rankings"; fi
 
@@ -2121,7 +2128,16 @@ varint()
 head = (pos + 7) // 8 * 8
 sec = [struct.unpack_from("<2Q", data, head + 40 + 16 * k) for k in range(24)]
 NAME_ORDER, SYMS_OFFSETS, SYMS = 2, 7, 8
-POSTINGS, BASES = 15, 16
+SYM_THS_OFFSETS, SYM_THS, POSTINGS, BASES = 10, 11, 15, 16
+def moved_theorem():
+    # a feature's last theorem moved to the next feature's row, both rows
+    # still ascending: two feature frequencies wrong, every table in range
+    m = sec[SYM_THS_OFFSETS][1] // 8
+    off = struct.unpack_from("<%dQ" % m, data, sec[SYM_THS_OFFSETS][0])
+    ths = struct.unpack_from("<%di" % off[-1], data, sec[SYM_THS][0])
+    f = next(f for f in range(m - 2) if off[f + 1] > off[f] and
+             (off[f + 2] == off[f + 1] or ths[off[f + 1] - 1] < ths[off[f + 1]]))
+    put("<Q", sec[SYM_THS_OFFSETS][0] + 8 * (f + 1), off[f + 1] - 1)
 def put(fmt, at, *xs):
     struct.pack_into(fmt, data, at, *xs)
 def huge_count():
@@ -2148,6 +2164,7 @@ corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, s
 corrupt longer 'data.append(0)'
 corrupt count 'huge_count()'
 corrupt base 'put("<d", sec[BASES][0], float("inf"))'
+corrupt frequency 'moved_theorem()'
 # a theorem's second feature made its first again
 corrupt repeat 'off = struct.unpack_from("<%dQ" % (sec[SYMS_OFFSETS][1] // 8), data, sec[SYMS_OFFSETS][0])
 i = next(i for i in range(len(off) - 1) if off[i + 1] - off[i] >= 2)
@@ -2157,7 +2174,8 @@ for c in "format:of format 2" "section:" "rows:offsets are malformed" \
          "number:out of range" "order:not sorted" "longer:longer than its contents" \
          "count:naive Bayes counts are malformed:nbayes" \
          "base:naive Bayes counts are malformed:mesh" \
-         "repeat:features differ from its sorted features:nbayes"; do
+         "repeat:features differ from its sorted features:nbayes" \
+         "frequency:feature frequencies differ from its features:nbayes"; do
   [ -n "$msg" ] && break
   snap=${c%%:*} why=${c#*:} method=cosine
   case $why in *:*) method=${why#*:} why=${why%%:*} ;; esac

@@ -520,11 +520,14 @@ string read_snapshot(const string &fname, const string &version, Corpus &c,
         return "its sorted features are malformed";
   // naive Bayes counts a theorem's features from its SYMS row, so a
   // repeated one would count above the theorem's use count: the row must
-  // hold the sorted row's features, each once
+  // hold the sorted row's features, each once; and it takes a feature's
+  // frequency from its SYM_THS row's length, which must be the number of
+  // theorems having it
   if (counts) {
     const int32_t* syms = s.at<int32_t>(SYMS);
-    // the last row each feature was seen in
+    // the last row each feature was seen in, and in how many rows
     vector<int32_t> seen(nsyms, -1);
+    vector<uint64_t> rows(nsyms, 0);
     for (uint64_t i = 0; i < n; ++i)
       for (uint64_t k = syms_off[i]; k < syms_off[i + 1]; ++k) {
         if (seen[syms[k]] == int32_t(i) ||
@@ -532,7 +535,12 @@ string read_snapshot(const string &fname, const string &version, Corpus &c,
               syms[k]))
           return "its features differ from its sorted features";
         seen[syms[k]] = i;
+        ++rows[syms[k]];
       }
+    const uint64_t* ths_off = s.at<uint64_t>(SYM_THS_OFFSETS);
+    for (uint64_t f = 0; f < nsyms; ++f)
+      if (ths_off[f + 1] - ths_off[f] != rows[f])
+        return "its feature frequencies differ from its features";
   }
   c.features.map(s.at<uint64_t>(FEATURE_HASHES), s.at<int32_t>(FEATURE_IDS),
     nsyms);

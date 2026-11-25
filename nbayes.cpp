@@ -109,6 +109,11 @@ class NaiveBayes : public Predictor {
     // tfreq[i] of each theorem i, and counts[i] unless [dense], from the
     // users of the theorems [0, to) learned
     void count_all(sample_t to);
+    // Appends theorem i's counts to [out] in increasing order of feature:
+    // 1000 for each of its features if [self], 1 for each feature of each
+    // of its users; [acc] (zero at every feature) and [fs] (empty) are
+    // scratch, left as they were.
+    void count(sample_t i, bool self, LVec& acc, LVec& fs, Counts& out) const;
     // Theorem i's sfreq: its counts in the order an unordered_map adding up
     // its own features and those of its users, in learn order, iterates
     // them, which score() sums in.
@@ -214,24 +219,28 @@ void NaiveBayes::count_all(sample_t to) {
       users.push(deps[u][k], u);
 
   LVec acc(sym_num, 0), touched;
+  for (sample_t i = 0; i < n; ++i) {
+    tfreq[i] = (i < to ? 1000 : 0) + users[i].size();
+    if (!dense) count(i, i < to, acc, touched, counts[i]);
+  }
+}
+
+void NaiveBayes::count(sample_t i, bool self, LVec& acc, LVec& fs,
+  Counts& out) const {
   const auto add = [&](sample_t j, long w) {
     for (const auto f : syms[j]) {
-      if (acc[f] == 0) touched.push_back(f);
+      if (acc[f] == 0) fs.push_back(f);
       acc[f] += w;
     }
   };
-  for (sample_t i = 0; i < n; ++i) {
-    tfreq[i] = (i < to ? 1000 : 0) + users[i].size();
-    if (dense) continue;
-    if (i < to) add(i, 1000);
-    for (const auto u : users[i]) add(u, 1);
-    sort(touched.begin(), touched.end());
-    for (const auto f : touched) {
-      counts[i].push_back(make_pair(f, acc[f]));
-      acc[f] = 0;
-    }
-    touched.clear();
+  if (self) add(i, 1000);
+  for (const auto u : users[i]) add(u, 1);
+  sort(fs.begin(), fs.end());
+  for (const auto f : fs) {
+    out.push_back(make_pair(f, acc[f]));
+    acc[f] = 0;
   }
+  fs.clear();
 }
 
 void NaiveBayes::learn(sample_t from, sample_t to) {
@@ -404,23 +413,8 @@ void NaiveBayes::index_after() {
   }
   vector<Counts> cs(own.size() - touched_n);
   LVec acc(sym_num, 0), fs;
-  const auto add = [&](sample_t j, long w) {
-    for (const auto f : syms[j]) {
-      if (acc[f] == 0) fs.push_back(f);
-      acc[f] += w;
-    }
-  };
-  for (size_t k = touched_n; k < own.size(); ++k) {
-    const sample_t i = own[k];
-    if (i < learned) add(i, 1000);
-    for (const auto u : users[i]) add(u, 1);
-    sort(fs.begin(), fs.end());
-    for (const auto f : fs) {
-      cs[k - touched_n].push_back(make_pair(f, acc[f]));
-      acc[f] = 0;
-    }
-    fs.clear();
-  }
+  for (size_t k = touched_n; k < own.size(); ++k)
+    count(own[k], own[k] < learned, acc, fs, cs[k - touched_n]);
   // calls fn(f, s, new) for each count s of feature f of own[k], in
   // increasing order of f; new if the snapshot has no count of f for it
   const auto for_counts = [&](size_t k, auto fn) {
