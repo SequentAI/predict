@@ -77,9 +77,11 @@ the theorems added after the snapshot, and those of the snapshot's theorems
 they use as dependencies (with the same `-d`; with another, it learns them
 all). Its scores then add up the same terms in another order, so they may
 differ in their last digits from those of a process started on text; the
-rankings do not. With `-P`, the types and
-each theorem's typed symbols are still read into memory. It can be read only
-by a `predict` built from the commit that wrote it, on a little-endian host.
+rankings do not. `-o` writes a new file and renames it over `<snapshot>`, so
+a process started on the old one keeps it. With `-P`, the types and each
+theorem's typed symbols are still read into memory: they are nested lists of
+varying length, not flat tables, and only `-P` processes read them. It can be
+read only by a `predict` built from the commit that wrote it, on a little-endian host.
 If the snapshot was written by another build, is truncated, is not a
 snapshot, or is malformed (a table or index out of bounds, unsorted or
 holding a number out of range, which `predict` checks of every table before

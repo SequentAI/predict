@@ -68,6 +68,14 @@ void Cosine::learn(long from, long to) {
     own_sorted.emplace_back(s.begin(), s.end());
     sort(own_sorted.back().begin(), own_sorted.back().end());
   }
+  if (from == 0 && to == (long)syms.size()) {
+    // every theorem: a feature's frequency is its number of theorems, read
+    // without the theorems' rows
+    vector<long> f(sym_ths.size());
+    for (long s = 0; s < (long)f.size(); ++s) f[s] = sym_ths[s].size();
+    tfidf.start(to, f);
+    return;
+  }
   for (long i = from; i < to; ++i)
     tfidf.add(syms[i]);
 }
