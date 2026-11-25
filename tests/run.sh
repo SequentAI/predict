@@ -52,11 +52,11 @@ checked() {
 }
 
 # same_answers <method> <a> <b>: whether outputs a and b are equal, except
-# that naive Bayes's scores, both finite, need agree only up to rounding: a
+# that nbayes's scores, both finite, need agree only up to rounding: a
 # process started on a snapshot sums the snapshot's learned scores in another
 # order than one that learned them from text
 same_answers() {
-  case $1 in nbayes|nbayes-dense) ;; *) [ "$2" = "$3" ]; return ;; esac
+  case $1 in nbayes) ;; *) [ "$2" = "$3" ]; return ;; esac
   paste <(tr ' ' '\n' <<<"$2") <(tr ' ' '\n' <<<"$3") | awk -F'\t' '
     $1 ~ /^\(/ && $2 ~ /^\(/ {
                  if ($1 !~ /^\(-?[0-9]/ || $2 !~ /^\(-?[0-9]/) { bad = 1; next }
@@ -1677,7 +1677,7 @@ $(from_snap UT1)
 $(from_snap UT2)"
   out=$(note='with !replace of the last theory' checked T1 -i "$WORK/b.snap" -L "$WORK/T1.thy" -p $m -n $n -S <<<"$qs
 $commands")
-  if ! same_answers $m "$out" "$want"; then
+  if [ "$out" != "$want" ]; then
     msg="$m, started on the snapshot and T: '$out', not '$want'"
     break
   fi
@@ -1699,7 +1699,7 @@ $qs")
 $(checked UT2 -i "$WORK/b.snap" -L "$WORK/UT2.thy" -p $m -n $n -S <<<"$uqs")"
   out=$(note='with !replace of a theory given features first' checked UT3 -i "$WORK/b.snap" -L "$WORK/UT3.thy" -p $m -n $n -S <<<"!replace T $(files T2)
 $uqs")
-  if ! same_answers $m "$out" "$want"; then
+  if [ "$out" != "$want" ]; then
     msg="$m, its <syms> giving T's features first: '$out', not '$want'"
     break
   fi
@@ -2148,11 +2148,16 @@ corrupt order 'put("<2i", sec[NAME_ORDER][0], *struct.unpack_from("<2i", data, s
 corrupt longer 'data.append(0)'
 corrupt count 'huge_count()'
 corrupt base 'put("<d", sec[BASES][0], float("inf"))'
+# a theorem's second feature made its first again
+corrupt repeat 'off = struct.unpack_from("<%dQ" % (sec[SYMS_OFFSETS][1] // 8), data, sec[SYMS_OFFSETS][0])
+i = next(i for i in range(len(off) - 1) if off[i + 1] - off[i] >= 2)
+put("<i", sec[SYMS][0] + 4 * (off[i] + 1), *struct.unpack_from("<i", data, sec[SYMS][0] + 4 * off[i]))'
 # the naive Bayes counts only with a method that reads them
 for c in "format:of format 2" "section:" "rows:offsets are malformed" \
          "number:out of range" "order:not sorted" "longer:longer than its contents" \
          "count:naive Bayes counts are malformed:nbayes" \
-         "base:naive Bayes counts are malformed:mesh"; do
+         "base:naive Bayes counts are malformed:mesh" \
+         "repeat:features differ from its sorted features:nbayes"; do
   [ -n "$msg" ] && break
   snap=${c%%:*} why=${c#*:} method=cosine
   case $why in *:*) method=${why#*:} why=${why%%:*} ;; esac
@@ -2163,6 +2168,15 @@ for c in "format:of format 2" "section:" "rows:offsets are malformed" \
      [ "$(wc -l < "$WORK/stderr")" -ne 1 ]; then
     msg="$snap: exit status $status, stderr '$(cat "$WORK/stderr")'"
   fi
+done
+# methods that read no naive Bayes counts start on a snapshot whose counts
+# are corrupt, ranking as on the snapshot itself
+want=$(checked none -i "$WORK/lists.snap" -p cosine -n 16 < "$DATA/lists.queries")
+for snap in count base; do
+  [ -n "$msg" ] && break
+  out=$(checked none -i "$WORK/$snap.snap" -p cosine -n 16 < "$DATA/lists.queries")
+  [ -n "$want" ] && [ "$out" = "$want" ] ||
+    msg="cosine on the snapshot with a corrupt $snap: '$out', not '$want'"
 done
 # private_memory <snapshot>: the anonymous memory in kB of a cosine process
 # started on <snapshot>, once it has learned: its own memory, which the

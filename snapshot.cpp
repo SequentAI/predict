@@ -518,6 +518,22 @@ string read_snapshot(const string &fname, const string &version, Corpus &c,
       if (sorted[k] < 0 || uint64_t(sorted[k]) >= nsyms ||
           (k > syms_off[i] && sorted[k - 1] >= sorted[k]))
         return "its sorted features are malformed";
+  // naive Bayes counts a theorem's features from its SYMS row, so a
+  // repeated one would count above the theorem's use count: the row must
+  // hold the sorted row's features, each once
+  if (counts) {
+    const int32_t* syms = s.at<int32_t>(SYMS);
+    // the last row each feature was seen in
+    vector<int32_t> seen(nsyms, -1);
+    for (uint64_t i = 0; i < n; ++i)
+      for (uint64_t k = syms_off[i]; k < syms_off[i + 1]; ++k) {
+        if (seen[syms[k]] == int32_t(i) ||
+            !binary_search(sorted + syms_off[i], sorted + syms_off[i + 1],
+              syms[k]))
+          return "its features differ from its sorted features";
+        seen[syms[k]] = i;
+      }
+  }
   c.features.map(s.at<uint64_t>(FEATURE_HASHES), s.at<int32_t>(FEATURE_IDS),
     nsyms);
   c.deps.map(s.at<uint64_t>(DEPS_OFFSETS), s.at<int32_t>(DEPS), n);
