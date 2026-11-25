@@ -21,7 +21,8 @@ class Tfidf {
 
     double get_sum() const { return (a.size() * thv) - sum_of_vector(a); }
 
-    void add(const LVec &syms) {
+    template <class Syms>
+    void add(const Syms &syms) {
       for (const auto& sym : syms) {
         freq[sym]++;
         a[sym] = log(freq[sym]);
@@ -31,7 +32,8 @@ class Tfidf {
     }
 
     // undoes add(syms), leaving what a Tfidf never given them holds
-    void remove(const LVec &syms) {
+    template <class Syms>
+    void remove(const Syms &syms) {
       for (const auto& sym : syms) {
         freq[sym]--;
         a[sym] = freq[sym] ? log(freq[sym]) : 0;

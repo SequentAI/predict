@@ -19,7 +19,8 @@ class DecisionTree {
     DecisionTree(LVec labels = LVec()) : labels(labels) {}
     DecisionTree(DecisionTree *left, DecisionTree *right, long feature)
       : left(left), right(right), feature(feature) {}
-    DecisionTree(string filename, const SLMap& th_no, const HLMap& sym_no);
+    DecisionTree(string filename, const Names& names,
+      const Features& features);
 
     ~DecisionTree() { delete left; delete right; }
 
@@ -33,10 +34,11 @@ class DecisionTree {
 
     void query(const LVec& features, LDMap& result, double weight) const;
     void write_to_file(string filename,
-      const SVec& no_th, const SVec& no_sym) const;
+      const Names& names, const Features& features) const;
 
   private:
-    string dot(string pos, const SVec& no_th, const SVec& no_sym) const;
+    string dot(string pos, const Names& names,
+      const Features& features) const;
 
     const double punish_weight = 0.05;
     const double min_weight = punish_weight*punish_weight;
@@ -75,7 +77,7 @@ void DecisionTree::query(const LVec& features, LDMap& result, double weight = 1.
 }
 
 DecisionTree::DecisionTree(string filename,
-  const SLMap& th_no, const HLMap& sym_no) : DecisionTree() {
+  const Names& names, const Features& features) : DecisionTree() {
 
   ifstream f(filename);
 
@@ -128,18 +130,18 @@ DecisionTree::DecisionTree(string filename,
         const string name_str = read_quoted(name_begin, line.end());
 
         if (is_feature) {
-          auto sym = sym_no.find(feature_hash(name_str));
-          if (sym == sym_no.end())
+          const long sym = features.find(feature_hash(name_str));
+          if (sym == -1)
             exit_error("Could not find feature `" + name_str + "'");
           else
-            pos->feature = sym->second;
+            pos->feature = sym;
         }
         else {
-          auto th = th_no.find(name_str);
-          if (th == th_no.end())
+          const long th = names.find(name_str);
+          if (th == -1)
             exit_error("Could not find label `" + name_str + "'");
           else
-            pos->labels.push_back(th->second);
+            pos->labels.push_back(th);
         }
       }
     }
@@ -150,11 +152,11 @@ DecisionTree::DecisionTree(string filename,
 }
 
 void DecisionTree::write_to_file(string filename,
-  const SVec& no_th, const SVec& no_sym) const {
+  const Names& names, const Features& features) const {
   string s =
     "digraph tree {\n"
     "  node [shape=box]\n" +
-    dot("t", no_th, no_sym) +
+    dot("t", names, features) +
     "}\n";
 
   ofstream f(filename);
@@ -167,23 +169,25 @@ void DecisionTree::write_to_file(string filename,
 }
 
 string DecisionTree::dot(string pos,
-  const SVec& no_th, const SVec& no_sym) const {
+  const Names& names, const Features& features) const {
   string s;
 
   if (is_leaf()) {
     for (unsigned i = 0; i < labels.size(); i++) {
       string new_pos = pos + to_string(i);
       s += "  " + pos + " -> " + new_pos + "\n";
-      s += "  " + new_pos + " [label = \"" + escape_quoted(no_th[labels[i]])
+      s += "  " + new_pos + " [label = \"" +
+        escape_quoted(string(names[labels[i]]))
                          + "\" shape = ellipse]\n";
     }
   }
   else {
-    s += "  " + pos + " [label = \"" + escape_quoted(no_sym[feature]) + "\"]\n";
+    s += "  " + pos + " [label = \"" + escape_quoted(features.text(feature)) +
+      "\"]\n";
     s += "  " + pos + " -> " + pos + "l\n";
     s += "  " + pos + " -> " + pos + "r\n";
-    s +=  left->dot(pos + "l", no_th, no_sym);
-    s += right->dot(pos + "r", no_th, no_sym);
+    s +=  left->dot(pos + "l", names, features);
+    s += right->dot(pos + "r", names, features);
   }
 
   return s;

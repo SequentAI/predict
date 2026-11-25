@@ -98,7 +98,7 @@ struct Views {
    from lines of <deps>'s format, every line of a theorem of [th_no] (from
    [seqf]). A dependency need not be of the version's theory, so it is kept
    as an id, which a view resolves. */
-vector<SVec> read_version_deps(const string& fname, const SLMap& th_no,
+vector<SVec> read_version_deps(const string& fname, const Names& th_no,
                                const string& seqf) {
   vector<SVec> deps(th_no.size());
   ifstream ic(fname);
@@ -111,8 +111,8 @@ vector<SVec> read_version_deps(const string& fname, const SLMap& th_no,
     if (pos == line.size())
       exit_error("Expected colon in line `" + line + "'!");
     ++pos;
-    auto got = th_no.find(thn);
-    if (got == th_no.end())
+    const long th = th_no.find(thn);
+    if (th == -1)
       exit_error("Theorem `" + thn + "' of `" + fname + "' is not in `" +
                  seqf + "'!");
     while (pos < line.size()) {
@@ -120,7 +120,7 @@ vector<SVec> read_version_deps(const string& fname, const SLMap& th_no,
         ++pos;
         continue;
       }
-      deps[got->second].push_back(read_id(line, pos, " "));
+      deps[th].push_back(read_id(line, pos, " "));
     }
   }
   if (ic.bad())
@@ -136,18 +136,17 @@ Version read_version(Views& views, const string& theory,
                      const vector<string>& files, TypeTable* types) {
   const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
     &theoriesf = files[3];
-  SLMap th_no;
-  SVec no_th;
-  read_order(seqf, th_no, no_th);
-  const long n = no_th.size();
+  Names th_no;
+  read_order(seqf, th_no);
+  const long n = th_no.size();
   Theories theories;
   theories.resize(n);
   read_theories(theoriesf, th_no, theories);
   const long t = theories.find(theory);
   for (long i = 0; i < n; ++i)
     if (t == -1 || theories.of[i] != t)
-      exit_error("Theorem `" + no_th[i] + "' is not of theory `" + theory +
-                 "' in `" + theoriesf + "'!");
+      exit_error("Theorem `" + string(th_no[i]) + "' is not of theory `" +
+                 theory + "' in `" + theoriesf + "'!");
   // read_theories skips lines of theorems not in <seq> and keeps a
   // theorem's last line, so every line is checked here
   {
@@ -156,7 +155,7 @@ Version read_version(Views& views, const string& theory,
     while (getline(ic, line)) {
       size_t pos = 0;
       const string thn = read_id(line, pos, ":");
-      if (!th_no.count(thn))
+      if (th_no.find(thn) == -1)
         exit_error("Theorem `" + thn + "' of `" + theoriesf +
                    "' is not in `" + seqf + "'!");
       if (line.substr(pos + 1, line.find(' ', pos) - pos - 1) != theory)
@@ -169,23 +168,23 @@ Version read_version(Views& views, const string& theory,
 
   const vector<SVec> deps = read_version_deps(depsf, th_no, seqf);
   // features numbered in the order the file first names them
-  LVecVec syms(n), sym_ths;
-  long sym_num = 0;
-  HLMap sym_no;
-  SVec no_sym;
+  Rows syms, sym_ths;
+  syms.resize(n);
+  Features features;
   TypedSyms typed(types ? n : 0), freq_only(types ? n : 0);
-  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym, types,
-    &typed, &freq_only);
+  read_syms(symsf, syms, sym_ths, th_no, features, types, &typed, &freq_only);
+  const long sym_num = features.size();
 
   Version v;
   v.theory = theory;
   v.priv = theories.priv;
   for (long k = 0; k < sym_num; ++k)
-    v.appearance.push_back(views.features.number(feature_hash(no_sym[k])));
+    v.appearance.push_back(
+      views.features.number(feature_hash(features.text(k))));
   v.syms.resize(n);
   v.deps.resize(n);
   for (long i = 0; i < n; ++i) {
-    v.ids.push_back(views.ids.number(no_th[i]));
+    v.ids.push_back(views.ids.number(string(th_no[i])));
     for (const auto k : syms[i]) v.syms[i].push_back(v.appearance[k]);
     for (const auto& d : deps[i]) v.deps[i].push_back(views.ids.number(d));
   }
@@ -204,7 +203,8 @@ Version read_version(Views& views, const string& theory,
   v.start.push_back(0);
   for (const auto k : by_feature) {
     v.feats.push_back(v.appearance[k]);
-    v.ths.insert(v.ths.end(), sym_ths[k].begin(), sym_ths[k].end());
+    const Row ths = sym_ths[k];
+    v.ths.insert(v.ths.end(), ths.begin(), ths.end());
     v.start.push_back(v.ths.size());
   }
   return v;

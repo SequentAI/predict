@@ -10,7 +10,7 @@ CXXFLAGS = -O3 -std=c++17 -Wall $(FPFLAGS)
 COMMIT := $(if $(wildcard .git),$(shell git rev-parse HEAD))
 COMMIT_FLAG := $(if $(COMMIT),-DPREDICT_COMMIT='"$(COMMIT)"')
 
-SOURCES = main.cpp format.cpp predictor.cpp tfidf.cpp knn.cpp mepo.cpp \
+SOURCES = main.cpp format.cpp tables.cpp predictor.cpp tfidf.cpp knn.cpp mepo.cpp \
           mepo_cosine.cpp cosine.cpp nbayes.cpp mesh.cpp rforest.cpp dtree.cpp \
           snapshot.cpp scope.cpp view.cpp versions.cpp
 

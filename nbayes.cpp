@@ -35,8 +35,8 @@ class NaiveBayes : public Predictor {
   public:
     // A theorem's dependencies learn its features only for the first
     // [max_deps] of them (all if 0). [dense] predicts with score().
-    NaiveBayes(const LVecVec& deps, const LVecVec& syms,
-      const LVecVec& sym_ths, long sym_num, long max_deps, bool dense);
+    NaiveBayes(const Rows& deps, const Rows& syms, const Rows& sym_ths,
+      long sym_num, long max_deps, bool dense);
 
     void learn(long from, long to);
     bool forget(long from);
@@ -102,8 +102,8 @@ class NaiveBayes : public Predictor {
     vector<size_t> post_start;
 };
 
-NaiveBayes::NaiveBayes(const LVecVec& deps, const LVecVec& syms,
-  const LVecVec& sym_ths, long sym_num, long max_deps, bool dense)
+NaiveBayes::NaiveBayes(const Rows& deps, const Rows& syms,
+  const Rows& sym_ths, long sym_num, long max_deps, bool dense)
 : Predictor(deps, syms, sym_ths, sym_num), tfidf(sym_num), sym_num(sym_num),
   max_deps(max_deps), dense(dense) {}
 

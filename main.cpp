@@ -74,7 +74,7 @@ const string usage_str =
 
 // prints the first n_predictions of [prediction], each theorem i as name(i)
 void print_prediction(const LDPairVec& prediction, long n_predictions,
-  const function<const string&(long)>& name, bool scores) {
+  const function<string_view(long)>& name, bool scores) {
   for (long j = 0; j < n_predictions; ++j) {
     // print label
     cout << name(prediction[j].first) << " ";
@@ -135,23 +135,22 @@ void add_theorems(Session& s, const vector<string>& files) {
   const string &symsf = files[0], &depsf = files[1], &seqf = files[2],
     &theoriesf = files[3];
   Corpus& c = s.corpus;
-  const long old_n = c.no_th.size();
-  read_order(seqf, c.th_no, c.no_th);
-  const long n = c.no_th.size();
+  const long old_n = c.names.size();
+  read_order(seqf, c.names);
+  const long n = c.names.size();
   c.deps.resize(n);
   c.syms.resize(n);
   s.statures.resize(n, 0);
   s.theories.resize(n);
-  read_deps(depsf, c.th_no, c.deps, old_n);
+  read_deps(depsf, c.names, c.deps, old_n);
   if (c.types) {
     c.typed.resize(n);
     c.freq_only.resize(n);
   }
   if (c.split) c.split->syms.resize(n);
-  long sym_num = c.no_sym.size();
-  read_syms(symsf, c.syms, c.sym_ths, sym_num, c.th_no, c.sym_no, c.no_sym,
-    c.types, &c.typed, &c.freq_only, old_n, c.split);
-  read_theories(theoriesf, c.th_no, s.theories);
+  read_syms(symsf, c.syms, c.sym_ths, c.names, c.features, c.types, &c.typed,
+    &c.freq_only, old_n, c.split);
+  read_theories(theoriesf, c.names, s.theories);
 }
 
 // Runs `!version <theory> <id> <syms> <deps> <seq> <theories>`, whose
@@ -247,7 +246,7 @@ void drop_view(Session& s, const string& args, const string& line) {
 // them all.
 void relearn(Session& s, unique_ptr<Predictor>& p, bool kept, long from) {
   if (kept)
-    p->learn(from, s.corpus.no_th.size());
+    p->learn(from, s.corpus.names.size());
   else {
     p = s.make();
     p->learn_all();
@@ -272,7 +271,7 @@ void command(Session& s, const string& line, unique_ptr<Predictor>& p) {
     drop_view(s, args, line);
   else if (line.rfind("!add ", 0) == 0) {
     const vector<string> files = command_files(line.substr(5), line);
-    const long from = s.corpus.no_th.size();
+    const long from = s.corpus.names.size();
     const bool kept = p->forget(from);
     add_theorems(s, files);
     relearn(s, p, kept, from);
@@ -363,7 +362,7 @@ void view_query(Session& s, string line, size_t start,
       s.boost);
   }
   print_prediction(ans, min(k, (long)ans.size()),
-    [&](long i) -> const string& {
+    [&](long i) -> string_view {
       const auto at = view.locate(i);
       return s.views.ids.key[at.first->ids[at.second]];
     }, s.scores);
@@ -377,10 +376,10 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
 
   string line;
   while (getline(cin, line)) {
-    const long n = s.corpus.no_th.size();
+    const long n = s.corpus.names.size();
     if (!line.empty() && line[0] == '!') {
       command(s, line, p);
-      cout << s.corpus.no_th.size() + s.views.theorems() << endl;
+      cout << s.corpus.names.size() + s.views.theorems() << endl;
       continue;
     }
 
@@ -404,7 +403,7 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
     if (s.corpus.split) {
       LDPairVec query;
       vector<TypedSym> typed;
-      parse_split_query(line.begin() + start, line.end(), s.corpus.sym_no,
+      parse_split_query(line.begin() + start, line.end(), s.corpus.features,
         *s.corpus.split, *s.corpus.types, query, typed);
       query.erase(remove_if(query.begin(), query.end(),
         [&](const pair<long, double>& f) {
@@ -413,11 +412,11 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
     }
     else if (s.corpus.types)
       ans = static_cast<const MePo&>(ranker).predict_typed(
-        parse_typed_query(line.begin() + start, line.end(), s.corpus.sym_no,
-          *s.corpus.types), n, no_adv);
+        parse_typed_query(line.begin() + start, line.end(),
+          s.corpus.features, *s.corpus.types), n, no_adv);
     else {
       LDPairVec query = parse_feature_list(line.begin() + start, line.end(),
-        s.corpus.sym_no);
+        s.corpus.features);
       // after !replace, a feature may have no theorem left
       query.erase(remove_if(query.begin(), query.end(),
         [&](const pair<long, double>& f) {
@@ -433,19 +432,19 @@ void interaction(unique_ptr<Predictor>& p, Session& s) {
         [&](long i) { return anc.count(s.theories.of[i]) > 0; }, s.boost);
     }
     print_prediction(ans, min(k, (long)ans.size()),
-      [&](long i) -> const string& { return s.corpus.no_th[i]; }, s.scores);
+      [&](long i) { return s.corpus.names[i]; }, s.scores);
   }
 }
 
 void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
-  const SLMap& th_no, const vector<string>& no_th, bool scores) {
+  const Names& names, bool scores) {
   unordered_set<long> eval;
-  read_eval(evalf, th_no, eval);
+  read_eval(evalf, names, eval);
 
   // last theorem up to which we learnt
   long prev = 0;
 
-  for (long i = 0; i < (long)no_th.size(); ++i) {
+  for (long i = 0; i < names.size(); ++i) {
     if (eval.find(i) != eval.end()) {
       p->learn(prev, i);
       prev = i;
@@ -453,9 +452,8 @@ void evaluation(unique_ptr<Predictor>& p, string evalf, long predno,
       long no_adv = min(i, predno);
       LDPairVec ans = p->predict(i, i, no_adv);
 
-      cout << no_th[i] << ":";
-      print_prediction(ans, no_adv,
-        [&](long j) -> const string& { return no_th[j]; }, scores);
+      cout << names[i] << ":";
+      print_prediction(ans, no_adv, [&](long j) { return names[j]; }, scores);
     }
   }
 }
@@ -645,19 +643,17 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
-  long sym_num = 0;
-  SLMap th_no;           // maps a theorem to its numeric identifier
-  HLMap sym_no;          // maps a symbol's hash to its numeric identifier
-  vector<string> no_th,  // theorem name table
-                 no_sym;
-  LVecVec deps,          // dependencies of each theorem
-          syms,          // syms[t] holds the symbols of a theorem t
-          sym_ths;       // sym_ths[s] holds the theorems which contain s
+  Names names;           // the theorems' names and numbers
+  Features features;     // the features' hashes and numbers
+  Rows deps,             // dependencies of each theorem
+       syms,             // syms[t] holds the symbols of a theorem t
+       sym_ths,          // sym_ths[s] holds the theorems which contain s
+       sorted_syms;      // Corpus::sorted_syms
   TypeTable types;
   TypedSyms typed, freq_only;
   TypedTable typed_table;
 
-  Corpus corpus{no_th, no_sym, th_no, sym_no, deps, syms, sym_ths,
+  Corpus corpus{names, features, deps, syms, sym_ths, sorted_syms,
     typed_mepo ? &types : nullptr, typed, freq_only,
     split ? &typed_table : nullptr};
   if (!snapshot_in.empty()) {
@@ -667,46 +663,46 @@ int main(int argc, char* argv[]) {
            << "!\n";
       return 3;
     }
-    sym_num = no_sym.size();
   }
-  const long snapshot_syms = sym_num;
+  const long snapshot_syms = features.size();
 
-  read_order(seqf, th_no, no_th);
+  read_order(seqf, names);
 
-  deps.resize(no_th.size());
-  syms.resize(no_th.size());
+  deps.resize(names.size());
+  syms.resize(names.size());
 
-  read_deps(depsf, th_no, deps);
+  read_deps(depsf, names, deps);
   if (typed_mepo) {
-    typed.resize(no_th.size());
-    freq_only.resize(no_th.size());
+    typed.resize(names.size());
+    freq_only.resize(names.size());
   }
-  if (split) typed_table.syms.resize(no_th.size());
-  read_syms(symsf, syms, sym_ths, sym_num, th_no, sym_no, no_sym,
-    corpus.types, &typed, &freq_only, 0,
-    corpus.split);
+  if (split) typed_table.syms.resize(names.size());
+  read_syms(symsf, syms, sym_ths, names, features, corpus.types, &typed,
+    &freq_only, 0, corpus.split);
+  // <syms> gave a snapshot's theorem features: its sorted row is stale
+  if (syms.extended()) sorted_syms = Rows();
 
   if (!snapshot_out.empty()) {
     write_snapshot(snapshot_out, version_str, corpus);
     return EXIT_SUCCESS;
   }
 
-  vector<unsigned char> statures(no_th.size(), 0);
+  vector<unsigned char> statures(names.size(), 0);
   if (!staturesf.empty())
-    read_statures(staturesf, th_no, statures);
+    read_statures(staturesf, names, statures);
 
   // getting number of a theorem
   //cout << th_no["Set.subsetI"] << endl;
 
   Theories theories;
-  theories.resize(no_th.size());
+  theories.resize(names.size());
   if (!theoriesf.empty())
-    read_theories(theoriesf, th_no, theories);
+    read_theories(theoriesf, names, theories);
 
   // builds a predictor for the corpus as it is
   auto make = [&]() {
     unique_ptr<Predictor> p;
-    const long sym_num = no_sym.size();
+    const long sym_num = features.size();
     if (method == "knn")
       p.reset(new kNN(deps, syms, sym_ths, sym_num, credit_deps));
     else if (method == "mepo")
@@ -719,7 +715,7 @@ int main(int argc, char* argv[]) {
       p.reset(new NaiveBayes(deps, syms, sym_ths, sym_num, max_deps,
         method == "nbayes-dense"));
     else if (method == "cosine" || method == "cosine-dense")
-      p.reset(new Cosine(deps, syms, sym_ths, sym_num,
+      p.reset(new Cosine(deps, syms, sym_ths, sorted_syms, sym_num,
         method == "cosine-dense"));
     else if (method == "mash")
       p.reset(new MaSh(deps, syms, sym_ths, sym_num, max_deps,
@@ -732,7 +728,7 @@ int main(int argc, char* argv[]) {
         n_trees, n_samples, n_features, depweight));
     else
       return p;
-    p->set_tables(no_th, no_sym, th_no, sym_no);
+    p->set_tables(names, features);
     if (!import_path.empty())
       p->import_data(import_path);
     return p;
@@ -774,7 +770,7 @@ int main(int argc, char* argv[]) {
     interaction(predictor, session);
   }
   else
-    evaluation(predictor, evalf, predno, th_no, no_th, scores);
+    evaluation(predictor, evalf, predno, names, scores);
 
   if (!export_path.empty())
     predictor->export_data(export_path);
