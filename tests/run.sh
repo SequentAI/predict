@@ -2028,12 +2028,12 @@ cp "$WORK/synth.syms" "$WORK/cut.syms"
 } > "$WORK/cut.deps"
 for m in $methods nbayes-dense cosine-dense "rforest -t 8"; do
   [ -n "$msg" ] && break
-  a=$(run cut -p $m -n 100 -S < "$WORK/synth.wqueries")
-  b=$(run rest -i "$WORK/head.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
-  c=$(from_snapshot both -p $m -n 100 -S < "$WORK/synth.wqueries")
-  d=$(from_snapshot lists -p $m -n 16 -S < "$WORK/lists.wqueries")
+  a=$(checked cut -p $m -n 100 -S < "$WORK/synth.wqueries")
+  b=$(checked rest -i "$WORK/head.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
+  c=$(checked none -i "$WORK/both.snap" -p $m -n 100 -S < "$WORK/synth.wqueries")
+  d=$(checked none -i "$WORK/lists.snap" -p $m -n 16 -S < "$WORK/lists.wqueries")
   [ -n "$a" ] && [ "$a" = "$b" ] && [ "$a" = "$c" ] &&
-    [ "$d" = "$(run lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ] ||
+    [ "$d" = "$(checked lists -p $m -n 16 -S < "$WORK/lists.wqueries")" ] ||
     msg="$m: the snapshot ranks otherwise than the text"
 done
 checked up -o "$WORK/up.snap" </dev/null
@@ -2137,9 +2137,11 @@ private_memory() {
     kill -0 $pid 2>/dev/null || break
     sleep 0.1
   done
+  # one that has not learned by then has hung, and fails
+  grep -q "Learning done" "$WORK/stderr" || kill $pid 2>/dev/null
   awk '/^Anonymous:/ { print $2 }' /proc/$pid/smaps_rollup 2>/dev/null
   exec 9>&-
-  wait $pid
+  wait $pid || echo "'$PREDICT -i $1' exited with status $?" >> "$WORK/failed"
 }
 if [ -z "$msg" ] && [ -r /proc/self/smaps_rollup ]; then
   # 20000 theorems of about 100 features: about 2 million numbers in each of

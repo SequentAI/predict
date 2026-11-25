@@ -211,14 +211,20 @@ void write_snapshot(const string &fname, const string &version,
   for (size_t k = 0; k < h.size(); ++k)
     memcpy(&buf[header + 8 * k], &h[k], 8);
 
-  // A process started on [fname] maps it: write a new file and rename it over
-  // [fname], so that the mapping keeps the old one.
+  // A process started on [fname] maps it: write a new file, created here
+  // (never one found at its path), and rename it over [fname], so that the
+  // mapping keeps the old one.
   const string tmp = fname + ".tmp" + to_string(getpid());
-  ofstream out(tmp, ios::binary);
-  out.write(buf.data(), buf.size());
-  out.close();
-  if (!out || rename(tmp.c_str(), fname.c_str()) != 0) {
-    remove(tmp.c_str());
+  const int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666);
+  bool ok = fd >= 0;
+  for (size_t at = 0; ok && at < buf.size(); ) {
+    const ssize_t k = write(fd, buf.data() + at, buf.size() - at);
+    ok = k > 0;
+    at += ok ? k : 0;
+  }
+  if (fd >= 0) ok = close(fd) == 0 && ok;
+  if (!ok || rename(tmp.c_str(), fname.c_str()) != 0) {
+    if (fd >= 0) remove(tmp.c_str());
     exit_error("Cannot write snapshot `" + fname + "'!");
   }
 }
